@@ -4,6 +4,28 @@ SolSwarm is an automated, multi-agent security review and audit swarm designed f
 
 `solswarm run` (or `audit run`) enforces the `source_security_review_v1` workflow. Reviewers inspect captured source, consult static leads, run fixed existing test suites inside an offline container, submit structured evidence-backed reports, and peer cross-check each other's claims. The bridge rejects arbitrary shell commands, runtime exploit generation, and live network access.
 
+## How It Works
+
+SolSwarm seals a source snapshot, collects static scanner leads, and verifies network disconnection before handing the sandbox to reviewers. Selected providers inspect the same captured source through a restricted MCP bridge.
+
+```mermaid
+flowchart TB
+    Source[Sealed source snapshot] --> Prepare[Static scans and sandbox preparation]
+    Prepare --> Sandbox[Verified offline Docker sandbox]
+    Orchestrator[Host orchestrator] --> Reviewers[Persistent ACP sessions: Claude, Codex, Grok, AGY]
+    Reviewers --> Bridge[Restricted MCP bridge]
+    Bridge -->|Read source and run fixed existing tests| Sandbox
+    Bridge -->|Submit findings| Commit[Canonical report commits]
+    Commit --> Peers[Peer cross-checks]
+    Peers --> Reports[Validation and adjudication: JSON, Markdown, HTML]
+```
+
+Providers work in parallel, with one active assignment per provider and remaining surfaces queued. Shared test runs execute one at a time inside the sandbox. After surface reviews settle, peers return claim-level verdicts: `upheld`, `partial`, or `refuted`.
+
+Reports bring together source citations, impact, suggested fixes, peer verdicts, and coverage gaps. Missing or failed work stays **INCOMPLETE**; model agreement and passing checks do not certify security.
+
+See the [architecture notes](docs/how-it-works.md) and [visual operator guide](docs/index.html) for the full workflow.
+
 ## Quick Start
 
 ```sh
