@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# audit
+# Entry CLI for the multi-agent security check and security review suite.
+# It audits any repository, in exactly one of two modes:
+#   local   --repo <path>       a directory already on disk
+#   remote  --github <url>      cloned into /tmp, audited, optionally removed (--clean)
+#
+# Commands:
+#   run     --repo <path> | --github <url> [options]   Run the multi-agent quorum review
+#   verify  [<report-dir>]                             Quorum adjudication + scoring on a report dir
+#   pocs    --repo <path> | --github <url> [options]   Run proof-of-concept tests against a target
+#   html    [<report-dir>]                             Regenerate report.html and findings-by-model.html
+#   report  [<report-dir>]                             Show findings and risk scores
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AUDIT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=../scripts/resolve-target.sh
+source "$AUDIT_ROOT/scripts/resolve-target.sh"
+
+COMMAND="${1:-help}"
+shift || true
+
+ARG_REPO="" ARG_GITHUB="" ARG_REF="" ARG_WORKDIR="" ARG_CLEAN=0
+SURFACE="all" OUT_DIR="" AGENTS="claude,grok,agy,codex" POCS_DIR="" POSITIONAL=()
+MODEL_ALL="" MODELS_CSV="" MODEL_CLAUDE="" MODEL_GROK="" MODEL_AGY="" MODEL_CODEX="" PLAN=0
+RPC="" RESUME_FROM="" TEST_ARTIFACTS="" RESTART_FAILED=0
+
+# Flags shared by `run` and `pocs`; anything else is a positional argument.
+parse_flags() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo|--path|-r) ARG_REPO="${2:?$1 needs a path}"; shift 2 ;;
+      --github|--gh|-g) ARG_GITHUB="${2:?$1 needs a URL}"; shift 2 ;;
+      --ref|--branch) ARG_REF="${2:?$1 needs a branch, tag or sha}"; shift 2 ;;
+      --workdir) ARG_WORKDIR="${2:?--workdir needs a path}"; shift 2 ;;
+      --clean) ARG_CLEAN=1; shift ;;
+      --surface|-s) SURFACE="${2:?$1 needs a value}"; shift 2 ;;
+      --out|-o) OUT_DIR="${2:?$1 needs a path}"; shift 2 ;;
+      --agents|-a) AGENTS="${2:?$1 needs a list}"; shift 2 ;;
+      --model) MODEL_ALL="${2:?--model needs a slug}"; shift 2 ;;
+      --models) MODELS_CSV="${2:?--models needs vendor=slug pairs}"; shift 2 ;;
+      --model-claude) MODEL_CLAUDE="${2:?--model-claude needs a slug}"; shift 2 ;;
+      --model-grok) MODEL_GROK="${2:?--model-grok needs a slug}"; shift 2 ;;
+      --model-agy) MODEL_AGY="${2:?--model-agy needs a slug}"; shift 2 ;;
+      --model-codex) MODEL_CODEX="${2:?--model-codex needs a slug}"; shift 2 ;;
+      --plan) PLAN=1; shift ;;
+      --resume-from) RESUME_FROM="${2:?--resume-from needs a report directory}"; shift 2 ;;
+      --test-artifacts) TEST_ARTIFACTS="${2:?--test-artifacts needs a Cargo target directory}"; shift 2 ;;
+      --restart-failed) RESTART_FAILED=1; shift ;;
+      --rpc) RPC="${2:?--rpc needs an https URL}"; shift 2 ;;
+      --pocs) POCS_DIR="${2:?--pocs needs a path}"; shift 2 ;;
+      -*) die "unknown option: $1 (see 'audit help')" ;;
+      *) POSITIONAL+=("$1"); shift ;;
+    esac
+  done
+}
+
+# The newest directory under reports/ that holds findings, auditor logs or a meta file.
+latest_report() {
+  local d
+  for d in $(ls -1dt "$AUDIT_ROOT"/reports/*/ 2>/dev/null); do
+    if [ -d "${d}auditors" ] || [ -f "${d}findings-and-scores.json" ]; then
+      printf '%s' "${d%/}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+report_dir_arg() {
+  if [ -n "${1:-}" ]; then printf '%s' "$1"; else latest_report || die "no report found under $AUDIT_ROOT/reports; pass a report directory"; fi
+}
+
+case "$COMMAND" in
+  setup-agents)
+    [ "$#" -eq 0 ] || die "setup-agents takes no arguments"
+    npm --prefix "$AUDIT_ROOT/runtime" ci --ignore-scripts --no-audit --no-fund
+    ;;
+  grok-docker)
+    node "$AUDIT_ROOT/native/grok-review/docker.mjs" "$@"
+    ;;
+  review-with-cli)
+    node "$AUDIT_ROOT/scripts/static-cli-review.mjs" "$@"
+    ;;
+  connect-terminal)
+    node "$AUDIT_ROOT/scripts/terminal-model-connector.mjs" connect "$@"
+    ;;
+  check-model-cli)
+    node "$AUDIT_ROOT/scripts/terminal-model-connector.mjs" check "$@"
+    ;;
+  check-agents|check-bridge)
+    if [ "${1:-}" = "--live" ]; then
+      shift
+      node "$AUDIT_ROOT/scripts/session-smoke.mjs" "$@"
+    else
+      [ "$#" -eq 0 ] || die "check-agents accepts --live [--agents <list>] [--out <empty-dir>]"
+      node "$AUDIT_ROOT/scripts/docker-agent-orchestrator.mjs" --check
+    fi
+    ;;
+  review-local)
+    node "$AUDIT_ROOT/scripts/terminal-local-review.mjs" "$@"
+    ;;
+  run)
+    parse_flags "$@"
+    [ -z "$RPC" ] || die "source security review does not contact deployed RPCs"
+    trap cleanup_target EXIT
+    resolve_target
+    arm_cleanup
+    if [ -z "$OUT_DIR" ]; then
+      OUT_DIR="$AUDIT_ROOT/reports/$(date +%Y-%m-%d-%H%M%S)-$TARGET_NAME"
+    fi
+    model_args=()
+    [ -n "$MODEL_ALL" ] && model_args+=(--model "$MODEL_ALL")
+    [ -n "$MODELS_CSV" ] && model_args+=(--models "$MODELS_CSV")
+    [ -n "$MODEL_CLAUDE" ] && model_args+=(--model-claude "$MODEL_CLAUDE")
+    [ -n "$MODEL_GROK" ] && model_args+=(--model-grok "$MODEL_GROK")
+    [ -n "$MODEL_AGY" ] && model_args+=(--model-agy "$MODEL_AGY")
+    [ -n "$MODEL_CODEX" ] && model_args+=(--model-codex "$MODEL_CODEX")
+    [ "$PLAN" -eq 1 ] && model_args+=(--plan)
+    [ -n "$RPC" ] && model_args+=(--rpc "$RPC")
+    [ -n "$RESUME_FROM" ] && model_args+=(--resume-from "$RESUME_FROM")
+    [ -n "$TEST_ARTIFACTS" ] && model_args+=(--test-artifacts "$TEST_ARTIFACTS")
+    [ "$RESTART_FAILED" -eq 1 ] && model_args+=(--restart-failed)
+    bash "$AUDIT_ROOT/scripts/orchestrate.sh" \
+      --target "$TARGET_DIR" --name "$TARGET_NAME" --mode "$TARGET_MODE" \
+      --source "$TARGET_SOURCE" --ref "$TARGET_REF" --commit "$TARGET_COMMIT" \
+      --surface "$SURFACE" --agents "$AGENTS" --out "$OUT_DIR" ${model_args[@]+"${model_args[@]}"}
+    report_kept_clone
+    ;;
+
+  verify|adjudicate)
+    node "$AUDIT_ROOT/scripts/verify-and-adjudicate.mjs" "$(report_dir_arg "${1:-}")"
+    ;;
+
+  pocs|test)
+    parse_flags "$@"
+    [ -z "$TEST_ARTIFACTS" ] || die "--test-artifacts is only for 'audit run'"
+    [ "$RESTART_FAILED" -eq 0 ] || die "--restart-failed is only for 'audit run'"
+    [ "$PLAN" -eq 0 ] || die "--plan is only for 'audit run'"
+    [ -z "$RESUME_FROM" ] || die "--resume-from is only for 'audit run'"
+    trap cleanup_target EXIT
+    resolve_target
+    arm_cleanup
+    POCS_DIR="${POCS_DIR:-$AUDIT_ROOT/pocs}"
+    bash "$AUDIT_ROOT/scripts/run-pocs.sh" --target "$TARGET_DIR" --name "$TARGET_NAME" --pocs "$POCS_DIR"
+    report_kept_clone
+    ;;
+
+  html|web)
+    node "$AUDIT_ROOT/scripts/generate-html-report.mjs" "$(report_dir_arg "${1:-}")"
+    ;;
+
+  report|summary)
+    TARGET_DIR_ARG="$(report_dir_arg "${1:-}")"
+    if [ -f "$TARGET_DIR_ARG/findings-and-scores.json" ]; then
+      node "$AUDIT_ROOT/scripts/verify-and-adjudicate.mjs" "$TARGET_DIR_ARG"
+    elif [ -f "$TARGET_DIR_ARG/index.md" ]; then
+      cat "$TARGET_DIR_ARG/index.md"
+    else
+      die "No report found in $TARGET_DIR_ARG"
+    fi
+    ;;
+
+  help|--help|-h)
+    cat <<'EOF'
+Security Audit & Security Check CLI (multi-agent, any repository)
+
+Pick exactly ONE target:
+  --repo <path>      LOCAL mode: audit a directory on disk (alias: --path, -r)
+  --github <url>     REMOTE mode: shallow-clone a GitHub repo into /tmp and audit it (alias: --gh, -g)
+                     accepts https://github.com/<owner>/<repo>[.git], git@github.com:<owner>/<repo>.git, <owner>/<repo>
+
+Usage:
+  audit run   (--repo <path> | --github <url>) [options]
+      Review supplied source/configuration/dependencies through restricted MCP tools and persistent ACP sessions. Only catalogued existing tests run in the offline Docker sandbox; no arbitrary commands, PoCs or deployed probes. Save validated peer-reviewed reports and remove owned resources.
+  audit setup-agents
+      Install the lockfile-pinned ACP runtime locally; no global tools or account login.
+  audit check-agents [--live [--agents <list>] [--out <empty-dir>]]
+      Check Docker, CLIs and pinned adapters. --live explicitly runs inert inference, bridge access and saved-session recovery checks.
+  audit pocs  (--repo <path> | --github <url>) [--pocs <dir>] [options]
+      Refuse Node/TypeScript PoCs on the host. Existing Rust checks run in the sandbox; command failures are errors, not reproduction evidence.
+  audit verify [<report-dir>]    Validate and score model claims on an existing report directory
+  audit report [<report-dir>]    Show findings and risk scores
+  audit html   [<report-dir>]    Regenerate report.html and findings-by-model.html
+  (<report-dir> defaults to the newest directory under reports/)
+
+  audit check-model-cli --all | --provider <claude|codex-native|grok-native|grok-docker>
+  audit review-with-cli --repo <local-directory> --file <relative-file> --provider <claude|codex-native|grok-native|grok-docker> --model <model> --out <empty-directory>
+  audit review-local --repo <local-directory> --file <relative-file> [--file <relative-file>] --out <empty-directory>
+  audit connect-terminal --provider <claude|codex-native|grok-native|grok-docker> --model <requested-model> --socket <owner-only-path>
+  audit grok-docker setup | login
+
+Options (run, pocs):
+  --ref <branch|tag|sha>   --github only: revision to check out (default: the default branch)
+  --workdir <dir>          --github only: clone base directory (default: $AUDIT_TMP or /tmp/audit-targets)
+  --clean                  --github only: delete the clone when the run ends (default: keep it)
+Options (run):
+  --test-artifacts <dir>   Import deploy/*.so from a prebuilt Cargo target directory; hashes are recorded, source equivalence remains unverified
+  --restart-failed         With --resume-from, review failed assignments in new sessions; provider refusals, quotas and login errors remain blocked
+  -s, --surface <id>       s1..s6 or all (default: all)
+  -o, --out <dir>          report directory (default: reports/<timestamp>-<repo>)
+  -a, --agents <list>      comma-separated subset of claude,grok,agy,codex (default: claude,grok,agy,codex)
+  --model <slug>           use this model for every selected agent
+  --models <list>          per vendor: claude=<slug>,grok=<slug>,agy=<slug>,codex=<slug>
+  --model-claude <slug>    one vendor. Also --model-grok, --model-agy, --model-codex
+                           precedence: --model-<vendor>, then --models, then --model, then the default
+  --resume-from <report>   continue saved source-review sessions with matching workflow, source, reviewers, models and assignments
+  --plan                   print the agent and model table and exit before the harness
+Options (pocs):
+  --pocs <dir>             directory with the PoC files (default: pocs)
+
+Surfaces:
+  s1, auth     Identity & access control
+  s2, input    Input handling & injection
+  s3, logic    Business logic & value flows
+  s4, config   Secrets, config & infrastructure
+  s5, deps     Dependencies & supply chain
+  s6, client   Client & web surface
+  all          distribute s1..s6 across the enabled agents
+
+Examples:
+  audit check-agents
+  audit run --github https://github.com/owner/repo
+  audit run --github owner/repo --ref v1.2.0 --surface s1 --clean
+  audit run --repo ~/work/my-app --agents claude,grok,agy,codex
+  audit run --repo . --surface s1 --model-codex gpt-6.1-sol
+  audit run --repo . --models claude=opus,codex=gpt-6.1-sol --plan
+EOF
+    ;;
+
+  *)
+    die "Unknown command: $COMMAND. Run 'audit help' for usage."
+    ;;
+esac

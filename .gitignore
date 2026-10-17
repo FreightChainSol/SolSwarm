@@ -1,0 +1,21 @@
+# Dependencies
+runtime/node_modules/
+node_modules/
+
+# Local build and review caches
+native/.cache/
+.cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local drops. Not part of the suite.
+# `audit pocs` writes here when --pocs is omitted.
+pocs/*
+!pocs/.gitkeep
+!pocs/status.json
+
+# One directory per `audit run`: auditors, harness, PoCs, and Docker build products.
+reports/*
+!reports/.gitkeep

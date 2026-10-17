@@ -1,0 +1,12 @@
+{
+  "name": "freightchain-audit-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pinned ACP adapters for the security audit coordinator; uses existing subscription logins.",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.92.0",
+    "@agentclientprotocol/codex-acp": "2.2.2"
+  }
+}

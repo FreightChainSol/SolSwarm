@@ -1,0 +1,1 @@
+# Local proofs for `audit pocs` when --pocs is omitted. A run writes its proofs under reports/<run>/pocs/.

@@ -1,0 +1,8 @@
+This review-only embedding uses public APIs from OpenAI Codex.
+Upstream source: https://github.com/openai/codex
+Pinned revision: 092d3acd6bec3e3a14bdc7e7a2810ab628ab759d
+OpenAI Codex copyright 2025 OpenAI, Apache License 2.0.
+
+The source preparation procedure retains the upstream LICENSE and NOTICE.
+The embedding is not the installed Codex CLI or an official stable Rust SDK.
+No compiled runtime is admitted by this policy/contract prototype.

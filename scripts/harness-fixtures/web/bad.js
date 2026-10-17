@@ -1,0 +1,12 @@
+el.innerHTML = user.name;
+exec(`curl ${req.query.url}`);
+db.query(`SELECT * FROM t WHERE id = ${req.params.id}`);
+const tls = { rejectUnauthorized: false };
+app.use(cors({ origin: '*' }));
+jwt.verify(token, secret, { algorithms: ['none'] });
+res.cookie('sid', id);
+addEventListener('message', (e) => { parent.postMessage(e.data, '*'); });
+const key = '-----BEGIN PRIVATE KEY-----\nMII';
+fetch(req.query.url);
+path.join(root, req.params.file);
+res.redirect(req.query.next);

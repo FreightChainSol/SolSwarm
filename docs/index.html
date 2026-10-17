@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>SolSwarm — Operator guide</title>
+  <meta name="description" content="Run a multi-agent source security review, understand the offline workflow, and inspect findings and coverage limits.">
+  <link rel="stylesheet" href="../scripts/report-style.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to guide</a>
+<aside class="rail">
+  <a class="brand" href="#overview"><span class="emblem" aria-hidden="true"></span><span>SOLSWARM<small>OPERATOR DOCUMENTATION</small></span></a>
+  <div class="rail-label">Field guide</div>
+  <nav aria-label="Guide sections">
+    <a class="active" href="#overview"><span>01</span>Overview</a>
+    <a href="#start"><span>02</span>Quick start</a>
+    <a href="#workflow"><span>03</span>Workflow</a>
+    <a href="#surfaces"><span>04</span>Review surfaces</a>
+    <a href="#tools"><span>05</span>Tools &amp; isolation</a>
+    <a href="#sessions"><span>06</span>Sessions</a>
+    <a href="#reports"><span>07</span>Read the report</a>
+  </nav>
+  <div class="rail-bottom"><span class="signal"></span>SOURCE REVIEW / V1<br><a href="../README.md">Command reference ↗</a><br><a href="how-it-works.md">Implementation notes ↗</a></div>
+</aside>
+<div class="workspace">
+  <div class="topbar"><span><b>SolSwarm</b> / Documentation</span><span class="topbar-detail">ACP sessions &nbsp; / &nbsp; Docker MCP bridge</span></div>
+  <main id="main">
+    <header class="hero" id="overview">
+      <div><div class="eyebrow">Architecture &amp; operations / 01</div><h1>SOLSWARM <span>GUIDE.</span></h1><p class="docs-intro">From captured source to a report you can act on.</p><p class="docs-lead">Inspect code, check existing tests, compare reviewer findings, and keep the coverage gaps visible.</p><div class="docs-actions"><a class="docs-primary" href="#start">Start a review <span aria-hidden="true">↗</span></a><a href="#reports">Understand the results →</a></div></div>
+      <div class="hero-status"><span class="eyebrow">Workflow boundary</span><strong>Source. Tests. Evidence.</strong><p>Review the supplied snapshot inside a disposable offline sandbox.</p><div class="docs-status-line"><span class="signal"></span>source_security_review_v1</div></div>
+    </header>
+    <div class="notice"><b>READ THE SCOPE</b><span>Model findings and passing checks do not certify security. Missing coverage stays incomplete.</span><a href="#evidence-limits">Evidence limits ↗</a></div>
+    <section class="stats" aria-label="Workflow facts">
+      <div class="stat orange"><div class="stat-label">Review providers<span>01</span></div><div class="stat-number">4</div><small>Claude · Codex · Grok · AGY</small></div>
+      <div class="stat blue"><div class="stat-label">Review surfaces<span>02</span></div><div class="stat-number">6</div><small>Identity through client security</small></div>
+      <div class="stat red"><div class="stat-label">Per test run<span>03</span></div><div class="stat-number">90<span class="docs-unit">s</span></div><small>Bounded execution inside Docker</small></div>
+      <div class="stat green"><div class="stat-label">Session heartbeat<span>04</span></div><div class="stat-number">30<span class="docs-unit">s</span></div><small>Activity tracking during reviews</small></div>
+    </section>
+
+    <section id="start" aria-labelledby="start-title">
+      <div class="section-heading"><h2 id="start-title"><span class="section-num">02</span>Quick start</h2><span class="meta-label">Run from the repository root</span></div>
+      <div class="docs-grid">
+        <article class="panel docs-command"><div class="docs-card-top"><span class="pill orange">Local repository</span><span class="meta-label">Setup → check → review</span></div><h3>Run your first review</h3><pre><code>./bin/audit setup-agents
+./bin/audit check-agents
+./bin/audit run --repo /path/to/authorized-repo</code></pre><p class="note">Use an owned or explicitly authorized repository. Docker and authenticated official provider CLIs are required.</p></article>
+        <article class="panel docs-command"><div class="docs-card-top"><span class="pill blue">GitHub snapshot</span><span class="meta-label">Pin the review target</span></div><h3>Choose a source and scope</h3><pre><code>./bin/audit run --github owner/repo --ref v1.2.0
+./bin/audit run --repo /path/to/repo --agents claude,codex --surface s4
+./bin/audit run --repo /path/to/repo --plan</code></pre><p class="note"><code>--plan</code> prints the requested reviewers and models without launching a review. <code>--out</code> must name a new or empty directory.</p></article>
+      </div>
+      <details class="panel docs-detail"><summary>Preflight, authentication &amp; provider limits<span class="meta-label">Before running</span></summary><div class="panel-body docs-prose"><p><code>setup-agents</code> installs lockfile-pinned ACP adapters. Existing official CLI logins stay in place. The host CLIs are trusted processes; their credentials do not enter the target sandbox.</p><p><code>check-agents</code> checks availability. <code>check-agents --live</code> makes real provider requests against an inert fixture to qualify access, saved-session recovery and submission. It does not establish security coverage or clear a policy refusal.</p><p><code>--blocked</code> records an offline blocked run. Refusals, quotas and authentication failures remain explicit. The coordinator does not switch models, providers or billing routes to retry a refusal.</p></div></details>
+    </section>
+
+    <section id="workflow" aria-labelledby="workflow-title">
+      <div class="section-heading"><h2 id="workflow-title"><span class="section-num">03</span>How the review runs</h2><span class="meta-label">One disposable sandbox</span></div>
+      <ol class="docs-pipeline">
+        <li><span class="eyebrow">01 / Capture</span><h3>Seal the source</h3><p>Save bytes, omissions, hashes and existing test entry points.</p></li>
+        <li><span class="eyebrow">02 / Prepare</span><h3>Collect static leads</h3><p>Inspect source and lockfiles with trusted scanners.</p></li>
+        <li><span class="eyebrow">03 / Disconnect</span><h3>Verify offline access</h3><p>Remove proxy access before tests and reviewer handoff.</p></li>
+        <li><span class="eyebrow">04 / Review</span><h3>Inspect in parallel</h3><p>Queue surfaces per provider; serialize shared test runs.</p></li>
+        <li><span class="eyebrow">05 / Commit</span><h3>Cross-check &amp; render</h3><p>Validate saved findings and peer verdicts, then release resources.</p></li>
+      </ol>
+      <div class="docs-boundary"><span class="pill blue">Host</span><span>Persistent ACP sessions</span><span class="docs-connector" aria-hidden="true">→</span><span>Restricted MCP bridge</span><span class="docs-connector" aria-hidden="true">→</span><span class="pill orange">Offline Docker</span><span>Captured source &amp; existing tests</span></div>
+      <details class="panel docs-detail"><summary>Execution order &amp; trust boundaries<span class="meta-label">Technical detail</span></summary><div class="panel-body docs-prose"><p>Networked preparation runs trusted static scanners and the lead harness. It skips target builds, target install scripts, lifecycle hooks, target tests, web servers and active service scans. A trusted manifest-only preparer may fetch locked crates.io dependencies without target execution; it refuses target Cargo configuration, custom registries and Git dependencies. After network disconnection, the coordinator attempts the frozen catalog of existing tests before assigning surface reviews.</p><p>Providers run in parallel, with one active assignment per provider and the remaining surfaces queued. Faster providers advance their own queue. All surface reviews settle before peer cross-checks start together. All active sessions settle before cleanup, including after cancellation or failure.</p><p>The container runs as uid 10001 with capabilities dropped and privilege escalation disabled. It receives no host home, provider credentials or Docker socket. Source, peer claims, repository instructions and scanner leads are untrusted data.</p><p>Named credentials, environment files, symlinks, hardlinks, dependencies, generated output and review history are excluded from the snapshot. Filename filtering cannot prove that ordinary source contains no secrets. Omissions remain recorded.</p><p>Preparation is bounded; the held review has no reasoning deadline. Completion or cancellation removes owned resources. Docker daemon availability is required to verify cleanup.</p></div></details>
+    </section>
+
+    <section id="surfaces" aria-labelledby="surfaces-title">
+      <div class="section-heading"><h2 id="surfaces-title"><span class="section-num">04</span>Six review surfaces</h2><span class="meta-label">Choose all or s1…s6</span></div>
+      <div class="surface-grid docs-surfaces">
+        <article class="surface"><div class="surface-code">S1 / IDENTITY</div><h3>Identity &amp; access</h3><p>Sessions, wallet signatures, ownership, roles, CSRF and origins.</p></article>
+        <article class="surface"><div class="surface-code">S2 / INPUT</div><h3>Input &amp; injection</h3><p>Schemas, parsing, size limits, parameter binding and paths.</p></article>
+        <article class="surface"><div class="surface-code">S3 / LOGIC</div><h3>Logic &amp; value</h3><p>Custody, state transitions, idempotency, transactions and locks.</p></article>
+        <article class="surface"><div class="surface-code">S4 / CONFIG</div><h3>Secrets &amp; infrastructure</h3><p>Credentials, response data, logs, CI, containers and TLS.</p></article>
+        <article class="surface"><div class="surface-code">S5 / DEPENDENCIES</div><h3>Supply chain</h3><p>Manifests, lockfiles, advisories, pinned tools and build reproducibility.</p></article>
+        <article class="surface"><div class="surface-code">S6 / CLIENT</div><h3>Client &amp; web</h3><p>DOM sinks, message origins, CSP, wallet intent and trust boundaries.</p></article>
+      </div>
+      <p class="note"><code>--surface all</code> distributes six surfaces across selected providers. A single surface requests a review from each selected provider.</p>
+      <details class="panel docs-detail"><summary>Solana checks<span class="meta-label">When present in source</span></summary><div class="panel-body docs-prose"><p>Inspect signers, account ownership, authority binding, PDA seeds and bumps, fixed CPI targets, reloads after CPI, duplicate accounts, initialization, closing, custody, Merkle commitments and payout/refund transitions.</p><p>Missing build toolchains and deployed-byte comparisons remain untested. This source workflow does not contact an RPC or issue transactions. On-chain program release verification remains a separate operator gate.</p></div></details>
+    </section>
+
+    <section id="tools" aria-labelledby="tools-title">
+      <div class="section-heading"><h2 id="tools-title"><span class="section-num">05</span>Tools &amp; isolation</h2><span class="meta-label">Restricted MCP interface</span></div>
+      <div class="docs-grid">
+        <article class="panel docs-capability green"><h3><span class="docs-symbol" aria-hidden="true">+</span>Available to reviewers</h3><ul class="docs-checklist"><li>Read and search the captured source.</li><li>Inspect plans, scanner leads and peer evidence.</li><li>Run an existing test by its frozen ID.</li><li>Commit findings and claim-level peer verdicts.</li></ul></article>
+        <article class="panel docs-capability red"><h3><span class="docs-symbol" aria-hidden="true">×</span>Outside the interface</h3><ul class="docs-checklist"><li>Arbitrary shell commands or caller-supplied code.</li><li>New tests, PoCs or abuse clients.</li><li>Deployed-service probes or transactions.</li><li>Dependency installation to work around failed tests.</li></ul></article>
+      </div>
+      <details class="panel docs-detail"><summary>Tool reference<span class="meta-label">Reads, fixed tests, commits</span></summary><div class="panel-body table-scroll"><table><thead><tr><th>Tool</th><th>Operation</th></tr></thead><tbody>
+        <tr><td><code>get_audit_context</code></td><td>Assignment, source scope and scanner coverage.</td></tr><tr><td><code>get_review_plan</code></td><td>Source-focused checks and cited leads.</td></tr><tr><td><code>list_files</code>, <code>read_file</code>, <code>search_code</code></td><td>Bounded source and report inspection.</td></tr><tr><td><code>list_existing_tests</code></td><td>Frozen, source-bound test IDs.</td></tr><tr><td><code>run_existing_tests</code></td><td>One fixed entry point. Accepts only <code>test_id</code>.</td></tr><tr><td><code>submit_audit_report</code></td><td>Immutable, identity-bound surface report.</td></tr><tr><td><code>submit_crosscheck_report</code></td><td>Verdict, reason and citations for every assigned peer claim.</td></tr>
+      </tbody></table><p class="note">The removed generic execution and PoC tools are rejected even when invoked directly. ACP permissions and AGY hooks enforce the same tool boundary.</p></div></details>
+      <details class="panel docs-detail"><summary>Fixed test commands &amp; shared lock<span class="meta-label">5 min wait / 90 s run</span></summary><div class="panel-body docs-prose"><pre><code>npm --offline --ignore-scripts run test
+cargo test --locked --offline
+bash --noprofile --norc ./test.sh</code></pre><p>The bridge reconstructs the command from the source-bound catalog. It accepts no caller-supplied executable, arguments, code, path, environment or URL. It verifies network disconnection and the captured entry-point manifest hash before execution. npm pre/post hooks are suppressed.</p><p>Shared sandbox tests run one at a time. Lock acquisition waits up to five minutes; execution then has a separate 90-second process-group limit. Missing dependencies, failed builds, unsupported runners and timeouts are coverage gaps.</p><p>A crashed bridge’s lock is never stolen: its Docker test may still be running. A new review or resume into a new output directory creates a fresh sandbox and lock. Existing tests remain untrusted target code; their output does not independently prove a finding.</p></div></details>
+    </section>
+
+    <section id="sessions" aria-labelledby="sessions-title">
+      <div class="section-heading"><h2 id="sessions-title"><span class="section-num">06</span>Sessions &amp; recovery</h2><span class="meta-label">Keep the original state</span></div>
+      <div class="panel docs-session"><div><span class="pill green">Persistent sessions</span><h3>No reasoning deadline</h3><p>A 30-second heartbeat records activity. One unexpected transport loss may reload the exact session when supported.</p></div><div><span class="pill orange">Exact bindings</span><h3>Resume the same review</h3><p>Workflow, source digest, models, reviewers and assignments must match. Preserve every original session directory.</p></div></div>
+      <details class="panel docs-detail"><summary>Resume command &amp; stopping conditions<span class="meta-label">No fallback reviewers</span></summary><div class="panel-body docs-prose"><pre><code>./bin/audit run --repo /path/to/repo --agents claude,codex --surface s4 \
+  --resume-from /path/to/previous-review --out /path/to/new-review</code></pre><p>Successful immutable submissions are reused without calling the provider again. Failed assignments retain their original sessions; changed peer claims require new cross-checks. Runtime test and scanner evidence is collected again. A fresh bridge points at a recreated sandbox while retaining the original native conversation. Resuming an already resumed review still requires the original session directories. Older adversarial workflows cannot resume into this workflow.</p><p>Provider refusals, quota limits, authentication failures and malformed protocol errors never trigger automatic retries or model changes. Heartbeats cannot override provider limits. Cancellation retains committed evidence and recovery state; failed or missing outputs remain incomplete.</p></div></details>
+    </section>
+
+    <section id="reports" aria-labelledby="reports-title">
+      <div class="section-heading"><h2 id="reports-title"><span class="section-num">07</span>Read the report</h2><span class="meta-label">Claims → fixes → evidence</span></div>
+      <div class="docs-report-map"><article><span class="eyebrow">Overview</span><h3>Start with coverage</h3><p>Read the incomplete status, severity totals and surface map. Zero claims on an unfinished surface is a gap.</p></article><article><span class="eyebrow">Findings</span><h3>Expand what matters</h3><p>Filter by severity or surface, search files and fixes, then open impact and remediation. Full source analysis and peer reviews sit one level deeper.</p></article><article><span class="eyebrow">By model</span><h3>Compare raw output</h3><p>Counts precede deduplication. Critical is grouped with high. Model output counts do not measure reviewer quality.</p></article></div>
+      <div class="docs-legend" aria-label="Report color meaning"><span class="pill red">High severity</span><span class="pill orange">Medium / gaps</span><span class="pill blue">Low / info</span><span class="pill green">Reported controls / fixes / agreement</span></div>
+      <details class="panel docs-detail" id="evidence-limits"><summary>Evidence, completeness &amp; limitations<span class="meta-label">Read before acting</span></summary><div class="panel-body docs-prose"><p><strong>Output validation, executed coverage and security acceptance are separate.</strong> A valid model report is not a reproduced vulnerability. A passing test or scan does not certify the project or accept residual risks.</p><p>Findings require relative <code>file:line</code> citations, impact, preconditions, source analysis, validation limits and a recommended fix. Reported controls require evidence. Canonical MCP submissions supply findings; terminal prose does not.</p><p>Missing, failed or invalid output remains incomplete, including a reviewer that submits and then exits unsuccessfully. Source-bound test evidence and structured scanner coverage are checked separately; missing or unsupported evidence is a coverage gap. Scanner results and test counts are tool-reported, not authenticated proof.</p><p>Peer reviewers return <code>upheld</code>, <code>partial</code> or <code>refuted</code> with reasons and citations. Agreement remains unverified model agreement. Priority scores are heuristic, not probabilities. Green labels describe reported controls, proposed fixes or matching claims; they never certify safety.</p><p>The captured source does not establish private-source coverage, deployed-byte parity, production configuration or live behavior. Served-model/provider identity is unverified. Host CLIs and their authentication stores remain trusted.</p></div></details>
+      <details class="panel docs-detail"><summary>Saved files &amp; report commands<span class="meta-label">Offline presentation</span></summary><div class="panel-body docs-prose"><pre><code>./bin/audit verify /path/to/report
+./bin/audit report /path/to/report
+./bin/audit html /path/to/report</code></pre><p><code>html</code> regenerates <code>report.html</code> and <code>findings-by-model.html</code> from saved evidence without starting a new model review. Both pages are standalone and work offline.</p><div class="table-scroll"><table><thead><tr><th>Artifact</th><th>Purpose</th></tr></thead><tbody><tr><td><code>source-manifest.json</code></td><td>Captured files, exclusions and source digest.</td></tr><tr><td><code>meta.json</code>, <code>workers.json</code></td><td>Requested models, assignments, observed exits and failures.</td></tr><tr><td><code>sessions/</code></td><td>Private recovery state and original-session pointers.</td></tr><tr><td><code>harness/</code></td><td>Test catalog, test/scanner output, plans and coverage limits.</td></tr><tr><td><code>submissions/</code></td><td>Authoritative identity-bound MCP commits.</td></tr><tr><td><code>auditors/</code></td><td>Derived findings and peer verdicts.</td></tr><tr><td><code>report-health.json</code></td><td>Output validity, coverage gaps and review status.</td></tr></tbody></table></div><p>Reviewer and source text is escaped. Attached SVG is displayed as inert source, never executed. A nonce CSP protects report scripts. Historical compatibility fields do not authorize PoC generation.</p></div></details>
+      <div class="docs-links"><a href="../README.md"><span class="eyebrow">Reference / 01</span><strong>Commands &amp; options ↗</strong></a><a href="how-it-works.md"><span class="eyebrow">Reference / 02</span><strong>Implementation details ↗</strong></a><a href="live-model.md"><span class="eyebrow">Separate workflow / 03</span><strong>Selected-file model relay ↗</strong></a></div>
+    </section>
+    <footer class="footer"><span>SolSwarm · Operator guide</span><span>White / orange · Source review / v1</span><span>Model assertions · Unverified provenance</span></footer>
+  </main>
+</div>
+</body>
+</html>

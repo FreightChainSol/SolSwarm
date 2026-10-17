@@ -1,0 +1,6 @@
+[package]
+name = "harness-fixture"
+version = "0.0.0"
+
+[dependencies]
+anchor-lang = "0.30.1"

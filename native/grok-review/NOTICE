@@ -1,0 +1,25 @@
+Freight Chain Grok review-only embedding.
+
+Uses public xai-org/grok-build commit
+2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8, SOURCE_REV
+559751fdcec02d413e4c57c8832ab275e4f44980.
+
+This is not the installed Grok 1.0.52 executable or a stable SDK.
+Upstream first-party code is Apache-2.0. Preserve upstream LICENSE and
+THIRD-PARTY-NOTICES in prepared source distributions.
+The selected-file contract and instruction are shared with the existing
+Freight Chain native Codex package, without using Codex for inference.
+
+Preliminary tests never authorize production authentication or inference.
+
+Private source adaptations add a cached-only/read-only auth initializer and
+resolver mode, explicit missing-credential refusal, bounded sampler streams,
+a fixed native routing facade, snapshot-only auth policy parsing and a
+forced-MDM refusal check. Every adapted upstream file carries a modification
+notice. Automatic login/refresh and unsupported managed policy are not enabled.
+
+The review package's routing module is a mechanically projected copy of the
+pinned native inject_url_derived_headers function, with only module references
+relocated to the existing lightweight native HTTP and shell-base crates.
+Preparation compares the complete projection against the pinned upstream body.
+The full agent shell/tool/UI crate is not linked into the review broker.

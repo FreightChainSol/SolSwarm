@@ -1,0 +1,10 @@
+el.textContent = user.name;
+spawn('curl', [url]);
+db.query('SELECT * FROM t WHERE id = $1', [req.params.id]);
+const tls = { rejectUnauthorized: true };
+app.use(cors({ origin: 'https://example.com' }));
+jwt.verify(token, secret, { algorithms: ['ES256'] });
+res.cookie('sid', id, { httpOnly: true, secure: true, sameSite: 'lax' });
+fetch(FIXED_URL);
+path.join(root, 'index.html');
+res.redirect('/home');

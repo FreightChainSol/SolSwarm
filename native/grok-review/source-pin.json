@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/xai-org/grok-build",
+  "commit": "2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8",
+  "sourceRevision": "559751fdcec02d413e4c57c8832ab275e4f44980",
+  "installedVersionIsNotSourceProvenance": true,
+  "authMode": "cached_oidc_only",
+  "stage": "native_contract_and_sampler_gates",
+  "admission": false
+}

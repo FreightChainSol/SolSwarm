@@ -1,0 +1,32 @@
+[package]
+name = "freightchain-grok-review"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[dependencies]
+futures-util = { workspace = true }
+indexmap = { workspace = true }
+libc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+toml = { workspace = true }
+xai-grok-sampler = { workspace = true }
+xai-grok-sampling-types = { path = "../crates/codegen/xai-grok-sampling-types" }
+xai-grok-login = { workspace = true }
+xai-grok-config = { workspace = true }
+xai-grok-http = { workspace = true }
+xai-grok-shell-base = { workspace = true }
+xai-grok-version = { workspace = true }
+xai-dirs = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+chrono = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

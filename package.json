@@ -1,0 +1,32 @@
+{
+  "name": "solswarm",
+  "version": "1.0.0",
+  "description": "Multi-Agent Security Review Suite — AI audit swarm for Solana, Rust, TypeScript, and Web3 systems",
+  "type": "module",
+  "main": "scripts/docker-agent-orchestrator.mjs",
+  "bin": {
+    "solswarm": "./bin/audit",
+    "audit": "./bin/audit"
+  },
+  "scripts": {
+    "setup": "./bin/audit setup-agents",
+    "check-agents": "./bin/audit check-agents",
+    "test": "node --test --test-concurrency=2 scripts/*.test.mjs",
+    "test:docker": "node --test scripts/*.docker.mjs",
+    "check": "bash -n bin/audit && bash -n scripts/orchestrate.sh && bash -n scripts/sandbox.sh && npm test"
+  },
+  "keywords": [
+    "solana",
+    "security",
+    "audit",
+    "multi-agent",
+    "swarm",
+    "mcp",
+    "acp",
+    "claude",
+    "codex",
+    "grok",
+    "agy"
+  ],
+  "license": "MIT"
+}
