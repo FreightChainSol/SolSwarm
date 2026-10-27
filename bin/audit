@@ -152,6 +152,10 @@ case "$COMMAND" in
     node "$AUDIT_ROOT/scripts/generate-html-report.mjs" "$(report_dir_arg "${1:-}")"
     ;;
 
+  pdf)
+    node "$AUDIT_ROOT/scripts/report-pdf.mjs" "$(report_dir_arg "${1:-}")"
+    ;;
+
   report|summary)
     TARGET_DIR_ARG="$(report_dir_arg "${1:-}")"
     if [ -f "$TARGET_DIR_ARG/findings-and-scores.json" ]; then
@@ -184,6 +188,7 @@ Usage:
   audit verify [<report-dir>]    Validate and score model claims on an existing report directory
   audit report [<report-dir>]    Show findings and risk scores
   audit html   [<report-dir>]    Regenerate report.html and findings-by-model.html
+  audit pdf    [<report-dir>]    Print report.html and findings-by-model.html to PDF with local headless Chrome
   (<report-dir> defaults to the newest directory under reports/)
 
   audit check-model-cli --all | --provider <claude|codex-native|grok-native|grok-docker>

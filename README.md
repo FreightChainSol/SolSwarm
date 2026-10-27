@@ -113,13 +113,16 @@ Each run produces comprehensive artifacts in `--out <dir>` (or `reports/<timesta
 - `report-health.json`: Detailed review status, verification gates, and security summary.
 - `report.html`: Standalone interactive HTML report dashboard with severity/surface filters and expandable evidence disclosures.
 - `findings-by-model.html`: Direct comparison of findings across models before deduplication.
+- `report.pdf`, `findings-by-model.pdf`: Printable copies of both pages with every disclosure expanded, written on request by `pdf`.
 
 To inspect, verify, or regenerate HTML reports without invoking models:
 ```sh
 ./bin/solswarm verify /path/to/report
 ./bin/solswarm report /path/to/report
 ./bin/solswarm html /path/to/report
+./bin/solswarm pdf /path/to/report    # or: npm run pdf -- /path/to/report
 ```
+PDF export prints the existing HTML pages with a local headless Chrome, Chromium, Edge or Brave; set `CHROME_PATH` to choose the browser.
 
 ## Verification & Testing
 
