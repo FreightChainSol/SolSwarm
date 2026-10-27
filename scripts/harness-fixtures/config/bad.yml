@@ -6,3 +6,4 @@ jobs:
         run: curl https://example.com/install.sh | bash
       - privileged: true
         volume: /var/run/docker.sock
+        node-version: 18

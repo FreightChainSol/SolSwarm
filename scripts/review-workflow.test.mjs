@@ -95,3 +95,24 @@ test('legacy workflow sessions and deployed RPC requests are rejected before rev
   await assert.rejects(runOrchestratedAudit({ ...request, rpc: 'https://example.invalid' }, { review }), /excludes deployed RPC/);
   await assert.rejects(runOrchestratedAudit({ ...request, resume: { conversationId: 'legacy' } }, { review }), /legacy adversarial-session/);
 });
+
+test('a Python project with tests gets a fixed, hash-bound pytest entry and no caller-controlled interpreter', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'security-review-python-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'backend/tests'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'backend/requirements.txt'), 'fastapi==0.115.0\n');
+  fs.writeFileSync(path.join(root, 'backend/tests/conftest.py'), '');
+  fs.writeFileSync(path.join(root, 'backend/tests/test_a.py'), 'def test_a():\n    assert True\n');
+  fs.writeFileSync(path.join(root, 'tools/test_orphan.py'), 'def test_b():\n    pass\n');
+  const snapshot = createSnapshot(root);
+  const catalog = buildExistingTestCatalog(snapshot.snapshot, snapshot.manifest);
+  disposeSnapshot(snapshot);
+  const rows = catalog.tests.filter(row => row.kind === 'pytest');
+  assert.deepEqual(rows.map(row => row.cwd), ['backend']);
+  assert.deepEqual(rows[0].files.map(file => file.path).sort(), ['backend/requirements.txt', 'backend/tests/conftest.py']);
+  const selected = selectExistingTest({ ...catalog, tests: [{ ...rows[0], command: 'sh', args: ['-c', 'x'] }] }, rows[0].id, catalog.sourceDigest);
+  assert.equal(selected.command, '/work/venv/bin/python');
+  assert.deepEqual(selected.args, ['-m', 'pytest', '-p', 'no:cacheprovider', '-q', '--tb=line']);
+  assert.equal(selected.timeoutMs, 900000);
+});

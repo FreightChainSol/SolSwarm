@@ -21,6 +21,15 @@ export function permissionDecision(params, expectedSession) {
   return option ? { outcome: { outcome: 'selected', optionId: option.optionId } } : { outcome: { outcome: 'cancelled' } };
 }
 
+// Names a refused call back to its own agent; the model chose this string, so only a short safe token is echoed.
+function refusedToolName(call) {
+  const name = call?.rawInput?.tool_name ?? call?._meta?.claudeCode?.toolName ?? call?.rawInput?.tool ?? call?.title;
+  return String(name ?? '').replace(/[^\w.:-]/g, '').slice(0, 80) || 'unknown';
+}
+
+const MAX_REFUSAL_CORRECTIONS = 3;
+const refusalCorrection = name => `The audit client refused your tool call ${name}: it is not one of the audit_docker review tools, and wrapped or nested tool calls are refused. Call each audit_docker tool directly by its own name, for example audit_docker__read_file or audit_docker__run_existing_tests. Continue the same assigned review from where you stopped, retain supported work, and submit the report.`;
+
 function modelValue(options) { return options?.find(option => option.category === 'model' || option.id === 'model')?.currentValue; }
 
 export async function preflightBridge(server, { cwd, env, signal, expectedRole }) {
@@ -80,6 +89,7 @@ export async function runReviewSession(options, { launch = buildSessionLaunch, p
     store.save('bridge_ready', { bridge, transport: spec.transport });
     for (;;) {
       let resumeCapable = false;
+      let refused = null;
       const attempt = totalRecoveries;
       currentRpc = new AgentRpc(spec.invocation, {
         logFile: logFile ? attempt ? `${logFile}.recovery-${attempt}` : logFile : undefined,
@@ -88,7 +98,9 @@ export async function runReviewSession(options, { launch = buildSessionLaunch, p
           if (method !== 'session/request_permission') throw new SessionError('permission_denied');
           phase = 'waiting_permission';
           const decision = permissionDecision(params, sessionId);
-          store.save(phase, { event: decision.outcome.outcome === 'selected' ? 'permission_decided' : 'permission_denied' });
+          const allowed = params?.options?.find(option => option.optionId === decision.outcome.optionId)?.kind === 'allow_once';
+          if (!allowed) refused = refusedToolName(params?.toolCall);
+          store.save(phase, { event: allowed ? 'permission_decided' : 'permission_denied' });
           phase = 'running';
           return decision;
         },
@@ -130,7 +142,18 @@ export async function runReviewSession(options, { launch = buildSessionLaunch, p
         phase = 'running';
         if (signal?.aborted) throw new SessionError('cancelled');
         const continuation = attempt || options.resume ? '\n\nContinue the saved review for this exact source and assignment. Retain supported work and disclose remaining coverage. Use the current audit MCP bridge. If the report was already submitted successfully, finish without resubmitting it.' : '';
-        const result = await currentRpc.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt + continuation }] }, null);
+        let text = prompt + continuation;
+        let result;
+        for (let corrections = 0; ; corrections++) {
+          refused = null;
+          result = await currentRpc.request('session/prompt', { sessionId, prompt: [{ type: 'text', text }] }, null);
+          // Grok ends its whole turn when a tool call is refused. Answer the refusal in the
+          // same session so the review continues instead of being recorded as user-cancelled.
+          if (result.stopReason !== 'cancelled' || signal?.aborted || !refused) break;
+          if (corrections === MAX_REFUSAL_CORRECTIONS) throw new SessionError('permission_denied');
+          store.save('running', { event: 'refusal_corrected' });
+          text = refusalCorrection(refused);
+        }
         // A loaded conversation can replay old errors, and a review can quote them.
         // Only the current RPC failure/stop status controls whether this turn succeeded.
         if (result.stopReason === 'cancelled' || signal?.aborted) throw new SessionError('cancelled');

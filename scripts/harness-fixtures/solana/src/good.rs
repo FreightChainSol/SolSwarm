@@ -17,3 +17,10 @@ pub fn pay(balance: u64) {
     let _ = CpiContext::new(program, accounts);
     let _next = balance.checked_add(1);
 }
+
+pub fn careful(amount: u64) -> Result<()> {
+    token_interface::transfer_checked(ctx, amount, decimals)?;
+    let _ = amount.checked_mul(2).ok_or(ErrorCode::Overflow)?;
+    let _ = u32::try_from(amount)?;
+    Ok(())
+}

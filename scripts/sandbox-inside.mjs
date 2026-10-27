@@ -480,6 +480,23 @@ async function runPocs() {
   }
 }
 
+// A Python project (dependency manifest in the directory or an ancestor) that has pytest-style tests.
+function hasPythonTests(root) {
+  let tests = false, projects = false;
+  (function walk(dir, depth) {
+    if (depth > 6 || tests && projects) return;
+    let ents = [];
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const ent of ents) {
+      if (ent.isSymbolicLink() || ['.git', 'node_modules', 'target', 'dist', '.venv', 'venv'].includes(ent.name)) continue;
+      if (ent.isDirectory()) walk(path.join(dir, ent.name), depth + 1);
+      else if (/^(?:conftest|test_.*|.*_test)\.py$/.test(ent.name)) tests = true;
+      else if (/^(?:requirements[\w.-]*\.txt|pyproject\.toml)$/.test(ent.name)) projects = true;
+    }
+  })(root, 0);
+  return tests && projects;
+}
+
 async function main() {
   try {
   fs.mkdirSync('/work/src', { recursive: true });
@@ -501,6 +518,12 @@ async function main() {
     const prepared = await run('python3', ['/opt/prepare-cargo-cache.py'], { cwd: '/tmp', timeoutMs: 12 * 60 * 1000 });
     log('cargo-cache', prepared);
     put('cargo-cache', prepared.code === 0 ? 'ran' : 'failed', `Manifest-only locked dependency preparation: ${brief(prepared)}`);
+  }
+  if (reviewOnly && process.env.SANDBOX_FAST !== '1' && hasPythonTests('/work/src')) {
+    // Wheel-only install from requirements files; no target code or build backend runs while networked.
+    const prepared = await run('python3', ['/opt/prepare-python-env.py'], { cwd: '/tmp', timeoutMs: 25 * 60 * 1000 });
+    log('python-env', prepared);
+    put('python-env', prepared.code === 0 ? 'ran' : 'failed', `Wheel-only Python test environment: ${brief(prepared)}`);
   }
   for (const row of assess(tree)) {
     if (row.result === 'impossible') put(row.id, 'impossible', row.detail);

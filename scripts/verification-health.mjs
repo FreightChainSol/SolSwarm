@@ -43,11 +43,16 @@ export function verificationHealth(root, read) {
   try {
     const record = read('harness/scanner-results.json');
     if (record.version !== 1 || !Array.isArray(record.checks)) throw Error();
-    const tools = ['gitleaks', 'semgrep', 'osv-scanner', 'cargo-audit', 'npm-audit'];
+    const names = file => file.path.split('/').at(-1);
+    const vendored = file => /(?:^|\/)(?:node_modules|vendor|dist|build|coverage|target|\.next|harness-fixtures|reports|\.cargo|__pycache__|\.venv|venv|env|\.tox|site-packages)\//.test(file.path);
+    const hasNode = manifest.files.some(file => names(file) === 'package.json' && !vendored(file));
+    const hasPython = manifest.files.some(file => !vendored(file) && /^(?:requirements[\w.-]*\.(?:txt|in)|pyproject\.toml|Pipfile(?:\.lock)?|poetry\.lock|uv\.lock|pdm\.lock)$/.test(names(file)));
+    const tools = ['gitleaks', 'semgrep', 'osv-scanner', 'cargo-audit', 'npm-audit', ...(hasPython ? ['python-deps'] : []), ...(hasNode ? ['node-deps'] : [])];
     for (const tool of tools) {
       const rows = record.checks.filter(row => row.tool === tool);
       scans.push(...rows);
-      if (!rows.length || rows.some(row => !['passed', 'findings', 'not_applicable'].includes(row.state))) gaps.push(`${tool}: required scanner coverage is unavailable or failed.`);
+      const detail = rows.find(row => row.detail && !['passed', 'findings', 'not_applicable'].includes(row.state))?.detail;
+      if (!rows.length || rows.some(row => !['passed', 'findings', 'not_applicable'].includes(row.state))) gaps.push(`${tool}: required scanner coverage is unavailable or failed.${detail ? ' ' + detail : ''}`);
       // Applicability is derived from the captured files, never a scanner's self-exemption.
       const locks = tool === 'cargo-audit' ? 'Cargo.lock' : tool === 'npm-audit' ? 'package-lock.json' : null;
       if (rows.some(row => row.state === 'not_applicable') && (!locks || manifest.files.some(file => file.path.split('/').at(-1) === locks))) gaps.push(`${tool}: invalid not-applicable claim.`);

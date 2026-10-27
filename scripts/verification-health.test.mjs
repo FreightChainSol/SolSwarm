@@ -25,7 +25,8 @@ function fixture(t) {
     data[evidenceFile] = { code: 0, stdout: result };
     checks.push({ tool, state: 'passed', evidenceFile });
   }
-  checks.push({ tool: 'cargo-audit', state: 'not_applicable' }, { tool: 'npm-audit', state: 'not_applicable' });
+  data['harness/scanner-output-node-deps-0.json'] = { code: 0, stdout: '{"nodeDeps":{"unresolved":0}}' };
+  checks.push({ tool: 'cargo-audit', state: 'not_applicable' }, { tool: 'npm-audit', state: 'not_applicable' }, { tool: 'node-deps', state: 'passed', evidenceFile: 'harness/scanner-output-node-deps-0.json' });
   data['harness/scanner-results.json'] = { version: 1, checks };
   const read = name => { if (!(name in data)) throw Error('missing fixture'); return data[name]; };
   return { data, check: () => verificationHealth(root, read), output };
@@ -76,4 +77,17 @@ test('missing program bytes are explained from the retained compiler output', t 
   f.data[f.output].stderr = "error: couldn't read `/work/target/tmp/../deploy/ratpool_escrow.so`: No such file or directory (os error 2)";
   row.evidenceHash = crypto.createHash('sha256').update(JSON.stringify(f.data[f.output])).digest('hex');
   assert.match(f.check().gaps.join('\n'), /Missing program artifact deploy\/ratpool_escrow.so.*--test-artifacts/);
+});
+
+test('a Python tree requires the resolvability check and names the unpinned coverage gap', t => {
+  const f = fixture(t);
+  f.data['source-manifest.json'].files.push({ path: 'backend/requirements.txt' });
+  assert.match(f.check().gaps.join('\n'), /python-deps: required scanner coverage is unavailable/);
+  const checks = f.data['harness/scanner-results.json'].checks;
+  checks.push({ tool: 'python-deps', state: 'blocked', detail: '3 unpinned requirement(s)' });
+  assert.match(f.check().gaps.join('\n'), /python-deps:.*3 unpinned requirement/);
+  checks.pop();
+  f.data['harness/scanner-output-python-deps-0.json'] = { code: 0, stdout: '{"pythonDeps":{"unresolved":0}}' };
+  checks.push({ tool: 'python-deps', state: 'passed', evidenceFile: 'harness/scanner-output-python-deps-0.json' });
+  assert.equal(f.check().state, 'passed');
 });

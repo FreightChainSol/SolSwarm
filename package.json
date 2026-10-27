@@ -13,6 +13,7 @@
     "check-agents": "./bin/audit check-agents",
     "test": "node --test --test-concurrency=2 scripts/*.test.mjs",
     "test:docker": "node --test scripts/*.docker.mjs",
+    "pdf": "node scripts/report-pdf.mjs",
     "check": "bash -n bin/audit && bash -n scripts/orchestrate.sh && bash -n scripts/sandbox.sh && npm test"
   },
   "keywords": [

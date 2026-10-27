@@ -1,9 +1,9 @@
 # Tools for the audit sandbox. The target's own Dockerfile is never used.
 # Runtime egress is not decided here; sandbox.sh puts the container on an
 # internal network behind audit/scripts/sandbox-proxy.mjs.
-FROM node:22-bookworm-slim AS nodebin
+FROM node:24-bookworm-slim AS nodebin
 
-FROM rust:1.89-bookworm
+FROM rust:1.99-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git python3 pkg-config libssl-dev build-essential bzip2 \
@@ -22,10 +22,12 @@ RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 RUN cargo install cargo-audit --version 0.22.2 --locked
 
 # Provision the declared toolchain completely: reviewer tests run with a read-only root.
-RUN rustup toolchain install 1.89.0 --profile minimal --component rustfmt --component clippy \
-    && rustup run 1.89.0 rustc --version
-ENV RUSTUP_TOOLCHAIN=1.89.0
+# Current Agave/LiteSVM test crates declare rust-version 1.97.1; a newer rustc still builds older crates.
+RUN rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy \
+    && rustup run 1.99.1 rustc --version
+ENV RUSTUP_TOOLCHAIN=1.99.1
 
+# v1.58 is available (sha256 amd64 7b82eb42..., arm64 97321742...) but is not yet verified against the Agave 4.3 test suite; v1.54 built it.
 ARG SOLANA_PLATFORM_TOOLS_VERSION=v1.54
 RUN arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
@@ -42,8 +44,8 @@ RUN arch="$(dpkg --print-architecture)" \
     && /opt/platform-tools/rust/bin/rustc --version \
     && /opt/platform-tools/rust/bin/cargo --version
 
-ARG GITLEAKS_VERSION=8.24.3
-ARG SEMGREP_VERSION=1.181.0
+ARG GITLEAKS_VERSION=8.30.1
+ARG SEMGREP_VERSION=1.182.1
 ARG SEMGREP_RULES_REV=17e31e11ebac99fb7dfe1cd288f7a32151b6f3f9
 RUN apt-get update && apt-get install -y --no-install-recommends python3-venv \
     && rm -rf /var/lib/apt/lists/* \
@@ -53,6 +55,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3-venv \
 
 COPY prepare-scanner-rules.py /opt/prepare-scanner-rules.py
 COPY prepare-cargo-cache.py /opt/prepare-cargo-cache.py
+COPY prepare-python-env.py /opt/prepare-python-env.py
+
+# uv provisions the CPython version the target declares (bookworm ships 3.11) and installs wheels only.
+ARG UV_VERSION=0.13.1
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+      amd64) a=x86_64; sha=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220 ;; \
+      arm64) a=aarch64; sha=9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14 ;; \
+      *) echo "unsupported arch $arch" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /tmp/uv.tar.gz "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${a}-unknown-linux-gnu.tar.gz" \
+    && printf '%s  /tmp/uv.tar.gz\n' "$sha" | sha256sum -c - \
+    && tar -xzf /tmp/uv.tar.gz --strip-components=1 -C /usr/local/bin "uv-${a}-unknown-linux-gnu/uv" \
+    && rm -f /tmp/uv.tar.gz \
+    && uv --version
 RUN arch="$(dpkg --print-architecture)" \
     && case "$arch" in amd64) a=x64 ;; arm64) a=arm64 ;; *) exit 1 ;; esac \
     && mkdir -p /tmp/gitleaks /opt/audit-scanners \

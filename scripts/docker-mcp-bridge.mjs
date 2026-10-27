@@ -301,12 +301,15 @@ export async function callBridgeTool(ctx, name, args = {}) {
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('report_json must encode a report object');
   }
 
+  const readProfile = () => {
+    try { return reportDir ? JSON.parse(fs.readFileSync(path.join(reportDir, 'harness', 'stack-profile.json'), 'utf8')) : undefined; } catch { return undefined; }
+  };
   if (name === 'get_audit_context') {
     const parts = [
       '# Docker Security Review Context', REVIEW_SCOPE, `- Container: ${container}`, `- Role: ${role}`, `- Agent: ${agent || 'unknown'}`,
       `- Auditor ID: ${auditor || 'n/a'}`, `- Assigned Surface: ${surface}`, `- Target Source Root (in container): /work/src`,
       `- Harness Leads Root (in container): /out/harness`, '',
-      renderSurfaceSkillGuidance(surface), '',
+      renderSurfaceSkillGuidance(surface, readProfile()), '',
     ];
     if (reportDir && fs.existsSync(path.join(reportDir, 'harness', 'summary.md'))) {
       parts.push('## Harness Summary', fs.readFileSync(path.join(reportDir, 'harness', 'summary.md'), 'utf8'));
@@ -319,8 +322,10 @@ export async function callBridgeTool(ctx, name, args = {}) {
     } else if (reportDir && fs.existsSync(path.join(reportDir, 'harness', 'review-plans.md'))) {
       parts.push('## Source Security Review Plans', fs.readFileSync(path.join(reportDir, 'harness', 'review-plans.md'), 'utf8').slice(0, 12_000));
     }
-    if (reportDir && fs.existsSync(path.join(reportDir, 'harness', 'solana.md'))) {
-      parts.push('## Solana Leads', fs.readFileSync(path.join(reportDir, 'harness', 'solana.md'), 'utf8').slice(0, 6000));
+    for (const [file, title, absent, limit] of [['solana.md', 'Solana Leads', 'Solana surface absent', 6000], ['python.md', 'Python Leads', 'Python surface absent', 6000], ['node.md', 'Node Leads', 'Node surface absent', 6000]]) {
+      if (!reportDir || !fs.existsSync(path.join(reportDir, 'harness', file))) continue;
+      const text = fs.readFileSync(path.join(reportDir, 'harness', file), 'utf8');
+      if (!text.includes(absent)) parts.push(`## ${title}`, text.slice(0, limit));
     }
     if (role === 'crosscheck' && reportDir) {
       const inboxFile = path.join(reportDir, 'crosscheck', `${agent}.json`);
@@ -344,7 +349,7 @@ export async function callBridgeTool(ctx, name, args = {}) {
     if (reportDir && fs.existsSync(path.join(reportDir, 'harness', 'review-plans.md'))) {
       return fs.readFileSync(path.join(reportDir, 'harness', 'review-plans.md'), 'utf8');
     }
-    return renderSurfaceSkillGuidance(surface);
+    return renderSurfaceSkillGuidance(surface, readProfile());
   }
 
   if (name === 'list_files') {
