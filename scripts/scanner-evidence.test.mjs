@@ -8,6 +8,8 @@ test('scanner failures, error envelopes and malformed output cannot become clean
     for (const stdout of ['', '{"error":"unavailable"}', '{}', 'null']) assert.equal(scannerEvidence(tool, { code: 0, stdout }).state, 'failed');
   }
   assert.equal(scannerEvidence('semgrep', { code: 0, stdout: '{"results":[],"errors":[{"type":"ParseError"}]}' }).state, 'failed');
+  assert.equal(scannerEvidence('semgrep', { code: 0, stdout: '{"results":[{}],"errors":[{"level":"warn","type":"Syntax error"},{"level":"error","type":"Rule parse error"}]}' }).state, 'failed');
+  assert.deepEqual(scannerEvidence('semgrep', { code: 0, stdout: '{"results":[{},{}],"errors":[{"level":"warn","type":"PartialParsing"}]}' }), { tool: 'semgrep', exitCode: 0, state: 'findings', findings: 2, parseWarnings: 1 });
   assert.equal(scannerEvidence('osv-scanner', { code: 1, stdout: '{"results":[]}' }).state, 'failed');
   assert.equal(scannerEvidence('osv-scanner', { code: 0, stdout: '{"results":[]}' }).state, 'passed');
   assert.equal(scannerEvidence('gitleaks', { code: 0, stdout: '[{"RuleID":"fixture"}]' }).state, 'findings');

@@ -38,11 +38,19 @@ readline.createInterface({input:process.stdin}).on('line', line => {
      send({id:1001,method:'session/request_permission',params:{sessionId:sid,toolCall:{title:'mcp__audit_docker__read_file',kind:'execute',rawInput:{command:'host command'}},options:[{kind:'allow_once',optionId:'allow'},{kind:'reject_once',optionId:'reject'}]}});
      return;
    }
+   if(mode==='refusal'||mode==='refusal-loop') {
+     fs.appendFileSync('prompts.txt',JSON.stringify(msg.params.prompt[0].text)+'\\n');
+     if(mode==='refusal-loop'||!fs.existsSync('refused.json')) {
+       send({id:1002,method:'session/request_permission',params:{sessionId:sid,toolCall:{title:'audit_docker__use_tool',_meta:{'x.ai/tool':{version:1,name:'use_tool',kind:'use_tool'}},rawInput:{variant:'UseTool',tool_name:'audit_docker__use_tool',tool_input:{tool_name:'audit_docker__run_existing_tests',tool_input:{}}}},options:[{kind:'allow_once',optionId:'allow'},{kind:'reject_once',optionId:'reject'}]}});
+       return;
+     }
+   }
    if(mode==='silent')return;
    send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:mode==='quoted-quota'?'Historical incident: You have hit your session limit; RESOURCE_EXHAUSTED. Remediation is documented.':'Acknowledged'}}}});
    reply(msg.id,{stopReason:'end_turn'});
    if(mode==='exit-error')process.exitCode=7;
  } else if(msg.id===1000)fs.writeFileSync('filesystem-denied.json',JSON.stringify(msg));
+ else if(msg.id===1002){fs.writeFileSync('refused.json',JSON.stringify(msg));reply(prompt.id,{stopReason:'cancelled'});}
  else if(msg.id===1001){fs.writeFileSync('permission.json',JSON.stringify(msg));reply(prompt.id,{stopReason:'end_turn'});}
 });
 `;
@@ -157,6 +165,26 @@ test('ACP client denies host filesystem requests and permission-title spoofing',
   assert.equal(permissionDecision({ sessionId: 'own', options, toolCall: grokCall }, 'own').outcome.optionId, 'allow');
   assert.equal(permissionDecision({ sessionId: 'own', options, toolCall: { ...grokCall, rawInput: { variant: 'UseTool', tool_name: 'other__read_file' } } }, 'own').outcome.optionId, 'reject');
   assert.equal(permissionDecision({ sessionId: 'other', options, toolCall: { _meta: { claudeCode: { toolName: 'mcp__audit_docker__read_file' } } } }, 'own').outcome.outcome, 'cancelled');
+});
+
+test('a turn the agent cancels after a refused tool call continues in the same session', async t => {
+  const f = fixture(t, 'refusal');
+  const result = await runReviewSession(f.options, f.support);
+  assert.equal(result.code, 0);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.workspace, 'refused.json'))).result.outcome.optionId, 'reject');
+  const prompts = fs.readFileSync(path.join(f.workspace, 'prompts.txt'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /refused your tool call audit_docker__use_tool/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.workspace, 'starts.json'))), 1);
+  assert.ok(f.state().events.some(event => event.event === 'refusal_corrected'));
+});
+
+test('repeated refusal-induced cancellation fails as a permission error, not a user cancel', async t => {
+  const f = fixture(t, 'refusal-loop');
+  const result = await runReviewSession(f.options, f.support);
+  assert.equal(result.code, 1);
+  assert.equal(result.failureReason, 'permission_denied');
+  assert.equal(fs.readFileSync(path.join(f.workspace, 'prompts.txt'), 'utf8').trim().split('\n').length, 4);
 });
 
 test('subscription environments omit credential and routing overrides', () => {

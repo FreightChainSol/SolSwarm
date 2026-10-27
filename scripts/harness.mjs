@@ -10,6 +10,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { scannerEvidence } from './scanner-evidence.mjs';
 import { analyzeStackAndPlans, renderReviewPlansMarkdown } from './audit-plans.mjs';
@@ -287,16 +288,21 @@ async function depScan(root) {
   }
   if (!npm.length) { lines.push('npm audit: no package-lock.json'); missingScanner('npm-audit', 'No package-lock.json', 'not_applicable'); }
   else {
-    for (const lock of npm) {
-      const dir = path.dirname(lock);
-      const r = await runCmd('npm', [
-        'audit', '--package-lock-only', '--json', '--registry', 'https://registry.npmjs.org',
-        '--userconfig', '/dev/null', '--globalconfig', '/dev/null',
-      ], dir, 60_000, cleanEnv({ npm_config_ignore_scripts: 'true' }));
-      lines.push(`## npm audit ${rel(root, lock)} (exit ${r.code})`);
-      lines.push(recordScanner('npm-audit', r, rel(root, lock)) ? summariseNpm(r.stdout, r.stderr) : 'FAILED: scanner did not produce a valid advisory result.');
-      lines.push('');
-    }
+    // npm refuses to load one file as both user and global config, so each gets its own empty file.
+    const npmConfig = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-npm-config-'));
+    for (const name of ['user', 'global']) fs.writeFileSync(path.join(npmConfig, name), '', { mode: 0o600 });
+    try {
+      for (const lock of npm) {
+        const dir = path.dirname(lock);
+        const r = await runCmd('npm', [
+          'audit', '--package-lock-only', '--json', '--registry', 'https://registry.npmjs.org',
+          '--userconfig', path.join(npmConfig, 'user'), '--globalconfig', path.join(npmConfig, 'global'),
+        ], dir, 60_000, cleanEnv({ npm_config_ignore_scripts: 'true' }));
+        lines.push(`## npm audit ${rel(root, lock)} (exit ${r.code})`);
+        lines.push(recordScanner('npm-audit', r, rel(root, lock)) ? summariseNpm(r.stdout, r.stderr) : 'FAILED: scanner did not produce a valid advisory result.');
+        lines.push('');
+      }
+    } finally { fs.rmSync(npmConfig, { recursive: true, force: true }); }
   }
   if (other.length) lines.push(`Lockfiles with no dedicated scanner in this harness: ${other.join(', ')}. osv-scanner covers these when it is on PATH (see tools.md).`);
   lines.push('This lead scan does not build, install, or send traffic. The disposable sandbox writes sandbox.md. A row there marked impossible was not covered.');
@@ -383,9 +389,11 @@ function summariseSemgrep(stdout, root) {
   try {
     const json = JSON.parse(stdout);
     const rows = json.results || [];
-    if (!rows.length) return 'no result from the pinned upstream OWASP rule bundle.';
     const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-    return rows.slice(0, 40).map((row) => {
+    const warned = [...new Set((json.errors || []).map((error) => error.path || '').filter(Boolean))];
+    const partial = warned.length ? `Partial parse in ${warned.length} file(s); unparsed spans were not analysed: ${warned.slice(0, 10).map((file) => file.startsWith(prefix) ? file.slice(prefix.length) : file).join(', ')}\n` : '';
+    if (!rows.length) return `${partial}no result from the pinned upstream OWASP rule bundle.`;
+    return partial + rows.slice(0, 40).map((row) => {
       const file = (row.path || '').startsWith(prefix) ? row.path.slice(prefix.length) : (row.path || '');
       const line = row.start?.line || '?';
       return `- ${row.check_id || 'rule'} ${file}:${line}`;

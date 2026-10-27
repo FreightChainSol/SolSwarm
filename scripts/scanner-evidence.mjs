@@ -6,7 +6,12 @@ export function scannerEvidence(tool, result) {
     const data = JSON.parse(result.stdout);
     let findings;
     if (tool === 'gitleaks' && Array.isArray(data)) findings = data.length;
-    if (tool === 'semgrep' && Array.isArray(data.results) && Array.isArray(data.errors) && !data.errors.length) findings = data.results.length;
+    // Semgrep reports per-file parse problems as level "warn" and still scans every other file;
+    // any other error (rule, config or fatal engine failure) leaves the scan incomplete.
+    if (tool === 'semgrep' && Array.isArray(data.results) && Array.isArray(data.errors) && data.errors.every(error => error?.level === 'warn')) {
+      findings = data.results.length;
+      if (data.errors.length) row.parseWarnings = data.errors.length;
+    }
     if (tool === 'osv-scanner' && Array.isArray(data.results)) findings = data.results.reduce((n, group) => n + group.packages.reduce((m, pkg) => m + (pkg.vulnerabilities || []).length, 0), 0);
     if (tool === 'cargo-audit' && Array.isArray(data.vulnerabilities?.list)) findings = data.vulnerabilities.list.length;
     if (tool === 'npm-audit' && data.metadata?.vulnerabilities && data.vulnerabilities && !data.error) findings = Object.keys(data.vulnerabilities).length;

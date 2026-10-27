@@ -22,9 +22,10 @@ RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 RUN cargo install cargo-audit --version 0.22.2 --locked
 
 # Provision the declared toolchain completely: reviewer tests run with a read-only root.
-RUN rustup toolchain install 1.89.0 --profile minimal --component rustfmt --component clippy \
-    && rustup run 1.89.0 rustc --version
-ENV RUSTUP_TOOLCHAIN=1.89.0
+# Current Agave/LiteSVM test crates declare rust-version 1.97.1; a newer rustc still builds older crates.
+RUN rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy \
+    && rustup run 1.99.1 rustc --version
+ENV RUSTUP_TOOLCHAIN=1.99.1
 
 ARG SOLANA_PLATFORM_TOOLS_VERSION=v1.54
 RUN arch="$(dpkg --print-architecture)" \

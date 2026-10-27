@@ -71,7 +71,8 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
   const fd=fs.openSync(target,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK,0o644);
   try{const stat=fs.fstatSync(fd);if(!stat.isFile()||stat.nlink!==1)throw Error('Test artifact destination changed');fs.ftruncateSync(fd,0);fs.writeFileSync(fd,bytes)}finally{fs.closeSync(fd)}
  }
- if(!(entry.artifacts&&entry.artifacts.length)&&['cargo','bash'].includes(entry.command)&&fs.existsSync('/opt/platform-tools/rust/bin/cargo')){
+ const programs=[];
+ if(['cargo','bash'].includes(entry.command)){
   const manifests=[],skip=new Set(['.git','node_modules','target','dist','.cargo']);
   (function walk(dir,depth){
    if(depth>4)return;
@@ -90,6 +91,11 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
    const hasAnchor=[dir,path.dirname(dir),path.dirname(path.dirname(dir))].some(d=>d.startsWith(root)&&fs.existsSync(path.join(d,'Anchor.toml')));
    if(!hasAnchor&&!/(?:anchor-lang|solana-program|solana-cpi|solana-sdk|solana-zk|pinocchio|target_os\\s*=\\s*"solana")/.test(toml))continue;
    const lib=(toml.match(/\\[lib\\][\\s\\S]*?\\bname\\s*=\\s*"([^"]+)"/)?.[1]||toml.match(/\\[package\\][\\s\\S]*?\\bname\\s*=\\s*"([^"]+)"/)?.[1]||'').replace(/-/g,'_');
+   programs.push({manifest,dir,lib});
+  }
+ }
+ if(!(entry.artifacts&&entry.artifacts.length)&&fs.existsSync('/opt/platform-tools/rust/bin/cargo')){
+  for(const {manifest,dir,lib} of programs){
    if(lib&&fs.existsSync(path.join('/work/target/deploy',lib+'.so')))continue;
    const sbfEnv={...process.env,CI:'1',CARGO_NET_OFFLINE:'true',CARGO_TARGET_DIR:'/work/target',RUSTC:'/opt/platform-tools/rust/bin/rustc',RUSTFLAGS:'-C strip=debuginfo',PATH:'/opt/platform-tools/rust/bin:/opt/platform-tools/llvm/bin:'+(process.env.PATH||'/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin')};
    delete sbfEnv.RUSTUP_TOOLCHAIN;
@@ -101,6 +107,20 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
     for(const f of fs.readdirSync(relDir))if(f.endsWith('.so'))fs.copyFileSync(path.join(relDir,f),path.join(depDir,f));
    }
   }
+ }
+ // Tests commonly load <workspace>/target/deploy/*.so; CARGO_TARGET_DIR moved that output to /work/target.
+ // Point an absent workspace target at it in the disposable source copy; an existing target is left alone.
+ if(fs.existsSync('/work/target/deploy'))for(const {dir} of programs){
+  let workspace=dir;
+  for(let d=dir;d===root||d.startsWith(root+'/');d=path.dirname(d)){
+   const toml=path.join(d,'Cargo.toml');
+   if(fs.existsSync(toml)&&/^\\s*\\[workspace\\]/m.test(fs.readFileSync(toml,'utf8'))){workspace=d;break}
+   if(d===root)break;
+  }
+  const link=path.join(workspace,'target');
+  let present=true;try{fs.lstatSync(link)}catch{present=false}
+  // A read-only source mount keeps the default layout; tests then fail with the missing-artifact detail.
+  if(!present&&fs.realpathSync(workspace)===workspace)try{fs.symlinkSync('/work/target',link)}catch{}
  }
  const child=spawn(entry.command,entry.args,{cwd,env:{...process.env,CI:'1',CARGO_NET_OFFLINE:'true',GOPROXY:'off',GOSUMDB:'off',npm_config_offline:'true',npm_config_ignore_scripts:'true'},detached:true,stdio:['ignore','pipe','pipe']});
  const kill=()=>{try{process.kill(-child.pid,'SIGKILL')}catch{}};
