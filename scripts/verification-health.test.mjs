@@ -91,3 +91,20 @@ test('a Python tree requires the resolvability check and names the unpinned cove
   checks.push({ tool: 'python-deps', state: 'passed', evidenceFile: 'harness/scanner-output-python-deps-0.json' });
   assert.equal(f.check().state, 'passed');
 });
+
+test('a failed suite gap carries its counts, dominant cause and capture truncation', t => {
+  const f = fixture(t);
+  const row = f.data['harness/existing-test-results-verification.json'][0];
+  const rehash = () => { row.evidenceHash = crypto.createHash('sha256').update(JSON.stringify(f.data[f.output])).digest('hex'); };
+  row.exitCode = 1;
+  f.data[f.output] = { stdout: 'E   Failed: requires PG_BINDIR\nE   Failed: requires PG_BINDIR\n= 2 failed, 40 passed, 3 skipped, 308 errors in 9.00s =\n', stderr: '' };
+  rehash();
+  const gap = f.check().gaps.join('\n');
+  assert.match(gap, /Exit 1; 40 passed, 310 failed or errored, 3 skipped\./);
+  assert.match(gap, /Most common failure \(2x\): Failed: requires PG_BINDIR/);
+  row.exitCode = 0;
+  f.data[f.output] = { stdout: '# pass 2\n# fail 0\n# skipped 0\n', stderr: '', omittedBytes: 10 };
+  rehash();
+  assert.equal(f.check().state, 'incomplete');
+  assert.match(f.check().gaps.join('\n'), /capture limit \(10 bytes omitted\)/);
+});

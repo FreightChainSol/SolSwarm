@@ -36,6 +36,13 @@ export function testCounts(stdout) {
   if (value('pass') != null && value('fail') != null) return { passed: Number(value('pass')), failed: Number(value('fail')), skipped: Number(value('skipped') || 0) + Number(value('todo') || 0) };
   return null;
 }
+// pytest --tb=line prints one "E   <message>" line per failure; a shared cause names the coverage gap.
+export function dominantTestFailure(stdout) {
+  const counts = new Map();
+  for (const [, message] of String(stdout).matchAll(/^E {3}(\S.{0,199})/gm)) counts.set(message, (counts.get(message) || 0) + 1);
+  const [message, count] = [...counts].sort((a, b) => b[1] - a[1])[0] || [];
+  return count >= 2 ? { message, count } : null;
+}
 export function missingTestArtifact(stderr) {
   const name = String(stderr).match(/couldn't read [^\n]*\/deploy\/([A-Za-z0-9_-]+\.so)[^\n]*No such file or directory/)?.[1];
   return name ? `Missing program artifact deploy/${name}; build it separately and supply --test-artifacts <cargo-target-dir>.` : null;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { scannerEvidence, testCounts } from './scanner-evidence.mjs';
+import { dominantTestFailure, scannerEvidence, testCounts } from './scanner-evidence.mjs';
 
 test('scanner failures, error envelopes and malformed output cannot become clean scans', () => {
   for (const code of [127, 124, 2]) assert.equal(scannerEvidence('osv-scanner', { code, stdout: '{"results":[]}' }).state, 'failed');
@@ -24,4 +24,11 @@ test('execution summaries distinguish nonzero tests, failures, skips and absent 
   assert.deepEqual(testCounts('........\n8 passed in 0.31s'), { passed: 8, failed: 0, skipped: 0 });
   assert.equal(testCounts('command completed successfully'), null);
   assert.deepEqual(testCounts('test result: ok. 0 passed; 0 failed; 0 ignored'), { passed: 0, failed: 0, skipped: 0 });
+});
+
+test('a shared pytest failure line names the dominant cause', () => {
+  const stdout = '_ ERROR at setup of test_a _\nE   Failed: Real PostgreSQL verification requires PG_BINDIR server binaries\n_ ERROR at setup of test_b _\nE   Failed: Real PostgreSQL verification requires PG_BINDIR server binaries\nE   AssertionError: one-off\n';
+  assert.deepEqual(dominantTestFailure(stdout), { message: 'Failed: Real PostgreSQL verification requires PG_BINDIR server binaries', count: 2 });
+  assert.equal(dominantTestFailure('E   AssertionError: one-off\n'), null);
+  assert.equal(dominantTestFailure('8 passed in 0.31s'), null);
 });

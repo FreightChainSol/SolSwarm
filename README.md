@@ -75,7 +75,7 @@ npm test              # Executes test suite
 | `get_review_plan` | Source-focused inspection plan for detected protocols and risk domains. |
 | `list_files`, `read_file`, `search_code` | Bounded inspection under approved container roots. |
 | `list_existing_tests` | Advertise test IDs from the frozen source test catalog. |
-| `run_existing_tests` | Run one fixed existing suite after verifying its manifest and offline containment. Accepts only `test_id`. |
+| `run_existing_tests` | Run one fixed existing suite after verifying its manifest and offline containment, or return the coordinator's recorded pre-review run of it. Accepts only `test_id`. |
 | `submit_audit_report` | Commit validated source findings and reviewed control assertions. |
 | `submit_crosscheck_report` | Commit a verdict with citations and reasoning for assigned peer claims. |
 
