@@ -18,6 +18,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { detectEcosystems, isProductionPath } from './stack-detect.mjs';
 
 const SKIP_DIRS = new Set([
   'node_modules', 'target', 'dist', 'build', '.git', 'vendor', 'coverage', '.next',
@@ -43,24 +44,25 @@ export const DOMAIN_SPECS = [
       { re: /\b(?:app|router)\.(?:get|post|put|delete|patch|use)\s*\(\s*['"`/]/g, label: 'Express/Fastify/Hono route' },
       { re: /\b(?:FastAPI|APIRouter|@app\.(?:route|get|post)|http\.HandleFunc|gin\.Engine|axum::Router|actix_web)\b/g, label: 'HTTP framework router' },
       { re: /@(?:Resolver|Query|Mutation)\s*\(|type\s+Query\s*\{/g, label: 'GraphQL resolver/schema' },
+      { re: /@\w+\.(?:get|post|put|delete|patch|route|api_route)\s*\(\s*['"]|\burlpatterns\b|\bAPIView\b|\bViewSet\b|\bBlueprint\s*\(/g, label: 'Python HTTP route (FastAPI/Flask/Django/DRF)' },
     ],
     leads: [
       {
         id: 'http-routes',
         title: 'HTTP Route & Controller Entry Points',
-        re: /@(?:Controller|Get|Post|Put|Delete|Patch)\s*\([^)]*\)|\b(?:app|router)\.(?:get|post|put|delete|patch)\s*\(\s*['"`][^'"`]+['"`]/g,
+        re: /@(?:Controller|Get|Post|Put|Delete|Patch)\s*\([^)]*\)|\b(?:app|router)\.(?:get|post|put|delete|patch)\s*\(\s*['"`][^'"`]+['"`]|@\w+\.(?:get|post|put|delete|patch|route|api_route)\s*\(\s*['"][^'"]+['"]|\burlpatterns\b|\bclass\s+\w+\((?:\w+\.)?(?:APIView|ViewSet|ModelViewSet|GenericAPIView)\)/g,
         note: 'Map each route to its auth guard, input schema validator, rate limit, and response DTO.',
       },
       {
         id: 'http-raw-input',
         title: 'Direct Request Input Access (Verify Schema Validation)',
-        re: /\breq\.(?:body|query|params|headers)\b|@(?:Body|Query|Param)\s*\(\s*\)/g,
+        re: /\breq\.(?:body|query|params|headers)\b|@(?:Body|Query|Param)\s*\(\s*\)|\brequest\.(?:json|form|args|GET|POST|data|query_params|body)\b|await\s+request\.(?:json|body|form)\s*\(|\b(?:Body|Query|Form|Header|Cookie)\s*\(|\*\*\w*(?:payload|body|data)\w*\.(?:dict|model_dump)\s*\(|\*\*request\./g,
         note: 'Confirm input is validated via strict schema (e.g. @ZodBody/@ZodQuery/@ZodParams) and rejects unknown fields / mass assignment.',
       },
       {
         id: 'http-csrf-origin',
         title: 'Cookie / Origin / CSRF & Host Header Checks',
-        re: /\b(?:SameSite|sameSite|csrf|xsrf|headers\.origin|headers\.referer|headers\.host|CORS_ORIGINS)\b/g,
+        re: /\b(?:SameSite|sameSite|samesite|csrf|xsrf|csrf_exempt|CSRFMiddleware|CORSMiddleware|allow_origins|allow_credentials|CORS_ALLOWED_ORIGINS|SESSION_COOKIE_\w+|TrustedHostMiddleware|headers\.origin|headers\.referer|headers\.host|CORS_ORIGINS)\b/g,
         note: 'Verify cookie-authenticated state changes enforce Origin/CSRF checks and host-bound planes cannot be spoofed.',
       },
     ],
@@ -80,7 +82,7 @@ export const DOMAIN_SPECS = [
     summary: 'Protobuf schemas, unary/streaming RPC handlers, metadata authentication interceptors, message limits, and reflection.',
     fileMarkers: [
       { re: /\bsyntax\s*=\s*["']proto[23]["']|\bservice\s+[A-Za-z0-9_]+\s*\{/g, label: 'Protobuf service schema' },
-      { re: /@(?:GrpcMethod|GrpcStreamMethod)\s*\(|\bTransport\.GRPC\b|@grpc\/grpc-js|\btonic::|\bprost::|\bgrpc\.NewServer\b/g, label: 'gRPC server/client runtime' },
+      { re: /@(?:GrpcMethod|GrpcStreamMethod)\s*\(|\bTransport\.GRPC\b|@grpc\/grpc-js|\btonic::|\bprost::|\bgrpc\.NewServer\b|\bgrpc\.(?:aio\.)?server\s*\(|_pb2_grpc\b/g, label: 'gRPC server/client runtime' },
     ],
     leads: [
       {
@@ -92,7 +94,7 @@ export const DOMAIN_SPECS = [
       {
         id: 'grpc-metadata-reflection',
         title: 'gRPC Metadata, Reflection & Message Limits',
-        re: /\b(?:ServerReflection|tonic_reflection|maxReceiveMessageLength|maxSendMessageLength|Metadata)\b/g,
+        re: /\b(?:ServerReflection|tonic_reflection|reflection\.enable_server_reflection|maxReceiveMessageLength|maxSendMessageLength|grpc\.max_receive_message_length|ServerInterceptor|invocation_metadata)\b|\bgrpc\.Metadata\b|\bnew\s+Metadata\s*\(/g,
         note: 'Check if reflection is exposed in production, if metadata tokens are verified, and if message/stream sizes are bounded.',
       },
     ],
@@ -110,19 +112,19 @@ export const DOMAIN_SPECS = [
     alwaysActive: false,
     summary: 'WebSocket gateways, Socket.IO / ws handlers, SSE streams, room/channel join authorization, and frame flood controls.',
     fileMarkers: [
-      { re: /@(?:WebSocketGateway|SubscribeMessage|Sse)\s*\(|\bsocket\.io\b|\bWebSocketServer\b|\bnew\s+WebSocket\s*\(|\bgorilla\/websocket\b|\btokio_tungstenite\b/g, label: 'WebSocket / SSE runtime' },
+      { re: /@(?:WebSocketGateway|SubscribeMessage|Sse)\s*\(|\bsocket\.io\b|\bWebSocketServer\b|\bnew\s+WebSocket\s*\(|\bgorilla\/websocket\b|\btokio_tungstenite\b|@\w+\.websocket\s*\(|\bWebSocketEndpoint\b|\bwebsockets\.(?:serve|connect|asyncio)|\bAsyncWebsocketConsumer\b|\bEventSourceResponse\b/g, label: 'WebSocket / SSE runtime' },
     ],
     leads: [
       {
         id: 'ws-gateways-events',
         title: 'WebSocket Gateways & Message Subscriptions',
-        re: /@(?:WebSocketGateway|SubscribeMessage|Sse)\s*\([^)]*\)|\b(?:ws|socket|io)\.on\s*\(\s*['"`](?:connection|message|[a-zA-Z0-9_:-]+)['"`]/g,
+        re: /@(?:WebSocketGateway|SubscribeMessage|Sse)\s*\([^)]*\)|@\w+\.websocket\s*\([^)]*\)|\basync\s+def\s+(?:websocket_\w+|\w*ws_\w*)\s*\(\s*\w*\s*:?\s*WebSocket\b|\bwebsocket\.(?:accept|receive_\w+|send_\w+)\s*\(|\b(?:ws|socket|io)\.on\s*\(\s*['"`](?:connection|message|[a-zA-Z0-9_:-]+)['"`]/g,
         note: 'Verify authentication on both initial handshake AND every subsequent message frame.',
       },
       {
         id: 'ws-rooms-broadcast',
         title: 'WebSocket Room Joins & Stream Broadcasts',
-        re: /\b(?:socket|client)\.(?:join|leave|to|emit|send)\s*\(/g,
+        re: /\b(?:socket|client)\.(?:join|leave|to|emit|send)\s*\(|\bgroup_(?:add|send)\s*\(|\b(?:manager|hub|connections)\.(?:broadcast|connect|subscribe|join)\s*\(/g,
         note: 'Check room/channel join calls for IDOR (can a user join another user/ride/admin room without authorization?).',
       },
     ],
@@ -140,25 +142,25 @@ export const DOMAIN_SPECS = [
     alwaysActive: false,
     summary: 'SQL/NoSQL/Redis persistence, row-level locking (`FOR UPDATE`), transaction isolation, TOCTOU races, and query injection.',
     fileMarkers: [
-      { re: /@prisma\/client|\b(?:PrismaClient|TypeOrmModule|drizzle-orm|Sequelize|mongoose|ioredis|sqlx::|diesel::|pg|mysql2|sqlite3)\b|datasource\s+db\s*\{/g, label: 'Database / ORM / Redis stack' },
+      { re: /@prisma\/client|\b(?:PrismaClient|TypeOrmModule|drizzle-orm|Sequelize|mongoose|ioredis|sqlx::|diesel::|pg|mysql2|sqlite3)\b|datasource\s+db\s*\{|\b(?:sqlalchemy|psycopg2?|asyncpg|aiosqlite|peewee|tortoise|aioredis|redis\.asyncio|django\.db)\b/g, label: 'Database / ORM / Redis stack' },
     ],
     leads: [
       {
         id: 'db-locks-transactions',
         title: 'Transactions & Pessimistic Row Locks (`FOR UPDATE`)',
-        re: /\$(?:transaction|queryRaw|executeRaw)\b|\bFOR\s+UPDATE\b|\bfindByWalletForUpdate\b|\bisolationLevel\b/gi,
+        re: /\$(?:transaction|queryRaw|executeRaw)\b|\bFOR\s+UPDATE\b|\bfindByWalletForUpdate\b|\bisolationLevel\b|\bwith_for_update\b|\bselect_for_update\b|\btransaction\.atomic\b|\bisolation_level\b|\bsession\.begin\b/gi,
         note: 'Verify all balance/credit/ticket/ride/pledge mutations run in ONE transaction under the correct lock order (e.g. player -> pool -> tickets/pledges).',
       },
       {
         id: 'db-state-mutations',
         title: 'Database Write / Update / Delete Operations',
-        re: /\.(?:create|update|updateMany|upsert|delete|deleteMany)\s*\(\s*\{/g,
+        re: /\.(?:create|update|updateMany|upsert|delete|deleteMany)\s*\(\s*\{|\bsession\.(?:add|add_all|delete|merge|flush|commit)\s*\(|\.objects\.(?:create|bulk_create|update_or_create|get_or_create)\s*\(|\.(?:save|bulk_update)\s*\(/g,
         note: 'Check if state updates can race (TOCTOU) when called concurrently without a prior `FOR UPDATE` lock, and verify `where` clauses bind the authenticated owner.',
       },
       {
         id: 'db-raw-sql-redis',
         title: 'Raw Queries & Redis Cache / Queue Operations',
-        re: /\$(?:queryRawUnsafe|executeRawUnsafe)\b|\.(?:query|raw|eval|evalsha)\s*\(/g,
+        re: /\$(?:queryRawUnsafe|executeRawUnsafe)\b|\.(?:query|raw|eval|evalsha|extra)\s*\(|\b(?:execute|executemany)\s*\(\s*(?:f['"]|['"][^'"\n]*(?:%s|%\(|\{))|\btext\s*\(\s*f?['"]|\bRawSQL\s*\(/g,
         note: 'Audit raw SQL/Redis scripts for parameter binding and injection.',
       },
     ],
@@ -177,13 +179,13 @@ export const DOMAIN_SPECS = [
     alwaysActive: false,
     summary: 'Solana/Anchor programs, Ed25519/SIWS authentication, Merkle roots & proofs, deterministic PRNG seeds, and key custody.',
     fileMarkers: [
-      { re: /@solana\/web3\.js|\b(?:anchor_lang|solana_program|tweetnacl|ed25519|ethers|viem|mulberry32|createHash|subtle\.digest)\b/g, label: 'Crypto / Web3 / PRNG stack' },
+      { re: /@solana\/web3\.js|\b(?:anchor_lang|solana_program|tweetnacl|ed25519|ethers|viem|mulberry32|createHash|subtle\.digest|solders\b|\bnacl\b|\bPyNaCl\b|cryptography\.hazmat|\bjose\.jwt\b|\bhmac\.compare_digest)\b/g, label: 'Crypto / Web3 / PRNG stack' },
     ],
     leads: [
       {
         id: 'crypto-sig-challenge',
         title: 'Signature Verification, SIWS Challenges & Nonces',
-        re: /\b(?:sign\.detached\.verify|verifyMessage|solana:signIn|signMessage|challenge|nonce)\b/g,
+        re: /\b(?:sign\.detached\.verify|verifyMessage|solana:signIn|signMessage|challenge|nonce|verify_signature|VerifyKey|BadSignatureError|Signature\.from_bytes|compare_digest)\b/g,
         note: 'Verify the signed payload is compared byte-for-byte against the server-issued challenge (domain, wallet, nonce, expiry) and consumed once.',
       },
       {
@@ -195,7 +197,7 @@ export const DOMAIN_SPECS = [
       {
         id: 'crypto-prng-random',
         title: 'Randomness & Seed Generation (`Math.random` vs Seeded/CSPRNG)',
-        re: /\b(?:Math\.random\s*\(|mulberry32|randomBytes|randomUUID|getRandomValues)\b/g,
+        re: /\b(?:Math\.random\s*\(|mulberry32|randomBytes|randomUUID|getRandomValues|random\.(?:random|randint|choice|choices|shuffle|seed|getrandbits)\s*\(|secrets\.token_\w+|os\.urandom|uuid\.uuid[14])\b/g,
         note: 'Confirm `Math.random()` is never used for gameplay, challenges, or tokens, and deterministic seeds are server-authoritative.',
       },
     ],
@@ -217,13 +219,13 @@ export const DOMAIN_SPECS = [
       {
         id: 'scope-guards-planes',
         title: 'Authentication Guards, Admin Checks & Host Plane Restrictions',
-        re: /@(?:UseGuards|Public|Admin|Roles)\b|\bcanActivate\b|\bfc_admin\b|\b__Host-fc_session\b|\bheaders\.host\b/g,
+        re: /@(?:UseGuards|Public|Admin|Roles)\b|\bcanActivate\b|\bfc_admin\b|\b__Host-fc_session\b|\bheaders\.host\b|\bDepends\s*\(\s*\w*(?:auth|user|admin|current|permission|role|session|wallet)\w*|\bSecurity\s*\(|\bpermission_classes\b|@(?:login_required|permission_required|user_passes_test)\b|\bis_(?:staff|superuser|admin)\b|\brequire_(?:admin|role|auth)\w*/g,
         note: 'Check every controller/handler to ensure admin routes require both `fc_admin` session AND `admin.<domain>` host, plus wallet-signed audit where required.',
       },
       {
         id: 'scope-resource-lookup',
         title: 'Resource Lookups by ID / Wallet (IDOR & Ownership Check)',
-        re: /@(?:Param|ZodParams)\b|\bfind(?:Unique|First|ById)\s*\(\s*\{[^}]{0,120}\bid\b/g,
+        re: /@(?:Param|ZodParams)\b|\bfind(?:Unique|First|ById)\s*\(\s*\{[^}]{0,120}\bid\b|\bget_object_or_404\s*\(|\.(?:get|filter|filter_by)\s*\([^)\n]{0,120}\b\w*_?id\s*=|\bsession\.get\s*\(\s*\w+\s*,/g,
         note: 'Trace whether the fetched resource (ride, ticket, pledge, replay, profile) is verified to belong to the caller session wallet before mutation or private read.',
       },
     ],
@@ -249,6 +251,12 @@ export const DOMAIN_SPECS = [
         title: 'Telemetry Verification, Replay Engine & Verdict Rules',
         re: /\b(?:ReplayEngine|verifyRide|verdict|telemetry_root|traffic|completeDist|HB_TIMEOUT_MS)\b/g,
         note: 'Check if a headless bot can forge telemetry, strip traffic collisions, coast/speed-hack, send empty batches, or replay another rider\'s recording.',
+      },
+      {
+        id: 'bot-background-jobs',
+        title: 'Background Jobs, Schedulers & Async Workers',
+        re: /@(?:shared_task|(?:celery|app|\w+_app)\.task)\b|\.(?:delay|apply_async)\s*\(|\bAsyncIOScheduler\b|\bBackgroundTasks\b|\basyncio\.create_task\s*\(|\bcrontab\s*\(/g,
+        note: 'Check job idempotency and double-execution (retries, overlapping schedules, multiple workers) for money, payout and state transitions; confirm job inputs are server-derived.',
       },
       {
         id: 'bot-economy-promos',
@@ -282,13 +290,13 @@ export const DOMAIN_SPECS = [
       {
         id: 'dto-serializers-returns',
         title: 'Controller Response DTOs & Serialization Boundaries',
-        re: /\b(?:Dto|Response|toJson|toResponse|serialize)\b|@(?:ZodSerializerDto|SerializeOptions)\b/g,
+        re: /\b(?:Dto|Response|toJson|toResponse|serialize)\b|@(?:ZodSerializerDto|SerializeOptions)\b|\bresponse_model\b|\.model_dump\s*\(|\.dict\s*\(\s*\)|\bfrom_orm\b|\bserializers\.\w+|\bJsonResponse\s*\(|\bjsonify\s*\(/g,
         note: 'Verify responses use explicit allowlist DTOs and never serialize raw DB rows, internal secrets, unredacted seeds, or other users\' private fields.',
       },
       {
         id: 'api-abuse-throttling',
         title: 'Rate Limits, Batch Caps & Public Action Endpoints',
-        re: /@(?:Throttle|SkipThrottle)\b|\b(?:rateLimit|maxItems|batch|actions\.json|\/api\/actions)\b/g,
+        re: /@(?:Throttle|SkipThrottle)\b|\b(?:rateLimit|maxItems|batch|actions\.json|\/api\/actions)\b|\b(?:slowapi|Limiter|limiter\.limit|throttle_classes|ratelimit|max_length|max_items|le=\d+)\b/g,
         note: 'Check public/unauthenticated endpoints and batch uploaders for missing rate limits, unbounded array sizes, or amplification.',
       },
     ],
@@ -349,22 +357,30 @@ export function analyzeStackAndPlans(targetRoot) {
       summary: spec.summary,
       detected: spec.alwaysActive,
       markerHits: [],
+      testOnlyHits: 0,
       leads: spec.leads.map((l) => ({ id: l.id, title: l.title, note: l.note, hits: [] })),
       checks: REVIEW_CHECKS[spec.id] || ['Inspect cited source and existing tests; record coverage limits.'],
     });
   }
 
   let scannedFiles = 0;
+  // Application code is read first so lead caps are not consumed by tests, docs and helper scripts,
+  // and a domain counts as detected only when production code (not a test or doc) carries its markers.
+  const candidates = [];
   walkFiles(root, (file) => {
     const ext = path.extname(file).toLowerCase();
     const base = path.basename(file);
     if (!CODE_EXT.has(ext) && base !== 'Anchor.toml' && base !== 'Cargo.toml' && base !== 'package.json') return;
+    candidates.push({ file, production: isProductionPath(relPath(root, file)) });
+  });
+  candidates.sort((a, b) => Number(b.production) - Number(a.production));
+  for (const { file, production } of candidates) {
     let st;
-    try { st = fs.lstatSync(file); } catch { return; }
-    if (!st.isFile() || st.size === 0 || st.size > MAX_FILE) return;
+    try { st = fs.lstatSync(file); } catch { continue; }
+    if (!st.isFile() || st.size === 0 || st.size > MAX_FILE) continue;
     let text;
-    try { text = fs.readFileSync(file, 'utf8'); } catch { return; }
-    if (text.includes('\0')) return;
+    try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
+    if (text.includes('\0')) continue;
 
     scannedFiles++;
     const rel = relPath(root, file);
@@ -374,10 +390,10 @@ export function analyzeStackAndPlans(targetRoot) {
       for (const marker of spec.fileMarkers) {
         const matches = findLineMatches(text, marker.re, 5);
         if (matches.length) {
-          dom.detected = true;
+          if (production) dom.detected = true; else dom.testOnlyHits++;
           for (const hit of matches) {
             if (dom.markerHits.length < 15) {
-              dom.markerHits.push(`${rel}:${hit.line} (${marker.label})`);
+              dom.markerHits.push(`${rel}:${hit.line} (${marker.label}${production ? '' : ', non-production'})`);
             }
           }
         }
@@ -388,14 +404,14 @@ export function analyzeStackAndPlans(targetRoot) {
         if (bucket.length >= MAX_LEADS_PER_RULE) continue;
         const matches = findLineMatches(text, rule.re, MAX_LEADS_PER_RULE - bucket.length);
         if (matches.length) {
-          dom.detected = true;
+          if (production) dom.detected = true; else dom.testOnlyHits++;
           for (const hit of matches) {
-            bucket.push({ citation: `${rel}:${hit.line}`, snippet: hit.snippet });
+            bucket.push({ citation: `${rel}:${hit.line}`, snippet: hit.snippet, production });
           }
         }
       }
     }
-  });
+  }
 
   const domains = [...state.values()].map((d) => ({
     ...d,
@@ -404,6 +420,7 @@ export function analyzeStackAndPlans(targetRoot) {
 
   return {
     scannedFiles,
+    ecosystems: detectEcosystems(root),
     detectedStacks: domains.filter((d) => d.detected).map((d) => d.id),
     domains,
   };
@@ -420,12 +437,55 @@ const REVIEW_CHECKS = {
   api_dto_abuse: ['Compare response DTOs and errors with authorization and data-minimization requirements.', 'Trace field selection and enumeration differences in source; do not probe accounts or endpoints.'],
 };
 
+// Python-specific source checks, added to a domain's plan only when Python is a detected ecosystem.
+export const PYTHON_CHECKS = {
+  http: [
+    'FastAPI/Starlette: every router must carry its auth `Depends(...)` (router-level or per-route); list routes with no dependency and confirm each is intentionally public. Check `include_router(..., dependencies=[...])` coverage and middleware ordering.',
+    'Django/DRF: compare `permission_classes`/`DEFAULT_PERMISSION_CLASSES`, `csrf_exempt`, `DEBUG`, `ALLOWED_HOSTS`, `SECURE_*`/`SESSION_COOKIE_*` settings; Flask: `SECRET_KEY` source, session cookie flags, `Blueprint` before_request guards.',
+    'Pydantic: request models should forbid unknown fields (`extra="forbid"`) and bound `max_length`/`ge`/`le`; flag `**payload.dict()`/`model_dump()` spread into ORM constructors or updates (mass assignment of role, owner, balance fields).',
+    'CORS: `CORSMiddleware` with `allow_origins=["*"]` or reflected origin together with `allow_credentials=True`; cookie-authenticated state changes need Origin/CSRF checks (Starlette has no default CSRF).',
+  ],
+  grpc: ['grpcio: server interceptors must authenticate every method; check `max_receive_message_length`, reflection and `context.abort` paths that leak internals.'],
+  websockets: ['FastAPI/Starlette/`websockets`: auth happens once at `accept()`; confirm the token is validated before accept, `Origin` is checked, and per-message authorization, size caps and rate limits exist. Look for broadcast managers that fan out private data by room id without membership checks.'],
+  databases: [
+    'SQLAlchemy/Django ORM: balance/credit/ticket/state changes must run in one transaction with `with_for_update()`/`select_for_update()` (or an atomic conditional UPDATE) in a canonical lock order; flag read-then-write across `await` points and separate sessions.',
+    'Raw SQL: `text(f"...")`, `execute("..." % x)`, `.format`, `.raw()`/`.extra()`/`RawSQL` must use bound parameters; check `order_by`/column names taken from request data.',
+    'Async correctness: shared module-level state mutated across coroutines, `asyncio.create_task` without error handling, and sessions shared between requests are race and data-leak sources.',
+  ],
+  crypto: [
+    'python-jose/PyJWT: `decode` must pin `algorithms`, verify signature, `exp`, `aud` and `iss`; flag `options={"verify_signature": False}`, `verify=False`, HS/RS confusion and key material loaded from request data.',
+    'Wallet auth (solders/PyNaCl/solana-py): confirm the signed message is the exact server-issued challenge (domain, nonce, expiry), nonce is single-use and stored atomically, and comparisons use `hmac.compare_digest`.',
+    '`random`/`uuid1` must not generate tokens, nonces or seeds; require `secrets`/`os.urandom`. `pickle`, `marshal`, `yaml.load`, `jsonpickle` on untrusted input are code execution.',
+  ],
+  scopes_roles: ['Trace `Depends(get_current_user)`/permission dependencies into each handler and confirm the loaded object belongs to the caller (`owner_id == user.id`) before read or mutation, including admin/staff routes and background-job entry points.'],
+  bots_economy: ['Celery/APScheduler/BackgroundTasks: confirm jobs are idempotent under retries, overlapping schedules and multiple workers, and that payouts/settlements use a unique key or conditional state transition.'],
+  api_dto_abuse: ['FastAPI: every route should declare `response_model` (or return an explicit schema); flag returning ORM objects, `**row.__dict__`, `.dict()` of internal models, verbose `HTTPException(detail=...)` and debug tracebacks/`DEBUG=True` responses.'],
+};
+
+export function renderEcosystemLines(profile) {
+  const eco = profile.ecosystems;
+  if (!eco) return [];
+  const row = (name, e, extra = '') => `- **${name}**: ${e.detected ? 'DETECTED' : 'absent'}${e.sourceFiles != null ? ` (${e.sourceFiles} production source files${e.testFiles ? `, ${e.testFiles} test/script files` : ''})` : ''}${extra}`;
+  const py = eco.python;
+  const declared = py.declaredVersion ? `; declared Python ${py.declaredVersion.version} (${py.declaredVersion.source})` : '';
+  return [
+    '## Detected Ecosystems',
+    row('Python', py, `${py.frameworks.length ? `; frameworks: ${py.frameworks.join(', ')}` : ''}${declared}`),
+    row('Node/TypeScript', eco.node, eco.node.frameworks.length ? `; frameworks: ${eco.node.frameworks.join(', ')}` : ''),
+    row('Rust', eco.rust),
+    `- **Solana program**: ${eco.solana.detected ? `DETECTED (${eco.solana.marks.slice(0, 4).join(', ')})` : 'absent'}`,
+    `- Primary stack(s) by production source: ${eco.primary.join(', ') || 'none'}${eco.unsupported?.length ? `; no dedicated harness for: ${eco.unsupported.join(', ')}` : ''}`,
+  ];
+}
+
 export function renderReviewPlansMarkdown(profile, surfaceFilter = '') {
   const filter = String(surfaceFilter || '').toUpperCase();
   const lines = [
     '# Stack Inventory & Source Security Review Plans',
     '',
     `Files scanned: ${profile.scannedFiles} | Active domains: ${profile.detectedStacks.join(', ') || 'none'}`,
+    '',
+    ...renderEcosystemLines(profile),
     '',
     '## Stack & Risk Domain Matrix',
     '',
@@ -451,7 +511,8 @@ export function renderReviewPlansMarkdown(profile, surfaceFilter = '') {
       lines.push(`- **Detected Stack Markers**: ${d.markerHits.slice(0, 6).map((m) => `\`${m}\``).join(', ')}`);
     }
     lines.push('', '### Source Review Checks');
-    for (const [idx, chk] of (REVIEW_CHECKS[d.id] || ['Inspect the cited source and existing tests; record evidence and coverage limits.']).entries()) {
+    const python = profile.ecosystems?.python?.detected ? PYTHON_CHECKS[d.id] || [] : [];
+    for (const [idx, chk] of [...(REVIEW_CHECKS[d.id] || ['Inspect the cited source and existing tests; record evidence and coverage limits.']), ...python].entries()) {
       lines.push(`${idx + 1}. ${chk}`);
     }
     lines.push('', '### Codebase Entry Points & Leads');
@@ -462,7 +523,7 @@ export function renderReviewPlansMarkdown(profile, surfaceFilter = '') {
         lines.push('- no direct regex hit (perform manual source trace)');
       } else {
         for (const h of lead.hits.slice(0, 15)) {
-          lines.push(`- \`${h.citation}\` — \`${h.snippet.replace(/`/g, "'")}\``);
+          lines.push(`- \`${h.citation}\`${h.production === false ? ' (test/doc)' : ''} — \`${h.snippet.replace(/`/g, "'")}\``);
         }
       }
       lines.push('');
@@ -472,58 +533,72 @@ export function renderReviewPlansMarkdown(profile, surfaceFilter = '') {
   return lines.join('\n') + '\n';
 }
 
-export function renderSurfaceSkillGuidance(surfaceCode) {
-  const code = String(surfaceCode || 'S1').toUpperCase();
-  const common = [
+const SURFACE_TITLES = {
+  S1: ['Identity, Scopes, Roles & Auth Planes', 'http, grpc, websockets, crypto, scopes_roles, api_dto_abuse'],
+  S2: ['Input Handling, Protocol Parsing & Abuse', 'http, grpc, websockets, databases, api_dto_abuse'],
+  S3: ['Business Logic, Bot/Economy Integrity, DB Locks & Crypto Custody', 'bots_economy, databases, crypto, scopes_roles'],
+  S4: ['Secrets, Config, Infrastructure & Response DTO Exposure', 'api_dto_abuse, http, grpc'],
+  S5: ['Dependencies, Lockfiles, CI & Verifiable Builds', 'crypto, http'],
+  S6: ['Client, Web Surface, WebSockets & Economy Client Boundary', 'http, websockets, crypto, bots_economy, api_dto_abuse'],
+};
+
+const NODE_SURFACE = {
+  S1: ['- Node: audit guards/middleware (`@UseGuards`, Express middleware order), session cookies (`__Host-`, `httpOnly`, `SameSite`, `Secure`), CSRF/Origin checks and gRPC/WebSocket auth.'],
+  S2: ['- Node: audit `@ZodBody/@ZodQuery/@ZodParams`/schema validators, prototype pollution, `child_process.exec`, `eval`/`new Function`, template-string SQL, SSRF and `path.join(req.*)` sinks.'],
+  S3: ['- Node: audit single-transaction execution under `FOR UPDATE` row locks (Prisma `$transaction`, TypeORM) in canonical lock order and check-then-act gaps.'],
+  S4: ['- Node: audit `.env` handling, helmet/CSP/nginx headers, Dockerfiles and leaked internal fields in controller DTOs.'],
+  S5: ['- Node: audit `package-lock.json`/`yarn.lock`/`pnpm-lock.yaml` advisories, lifecycle (`postinstall`) scripts and reachability.'],
+  S6: ['- Node/browser: audit DOM XSS sinks, `postMessage` origin checks, CSP/SRI, CORS (`*` vs credentials) and WebSocket CSWSH.'],
+};
+
+const PYTHON_SURFACE = {
+  S1: [
+    '- Python: map every FastAPI/Starlette route to its auth `Depends(...)` (router- and route-level), Django/DRF `permission_classes`, Flask `before_request`/decorators; list routes with none.',
+    '- Python: audit JWT handling (python-jose/PyJWT: pinned `algorithms`, signature, `exp`/`aud`/`iss`), session/cookie flags, CSRF for cookie auth, and wallet-signature challenge binding (single-use nonce, domain, expiry, `hmac.compare_digest`).',
+    '- Python: for every handler taking an `*_id`/wallet, confirm the loaded ORM object belongs to the caller before read or write (IDOR); compare admin/staff dependency chains with player routes.',
+  ],
+  S2: [
+    '- Python: audit Pydantic models (`extra="forbid"`, length/range bounds), `**model.dict()` mass assignment, `Body/Query/Form` defaults and file uploads (`python-multipart`) for size/type/path handling.',
+    '- Python: audit SQL built with f-strings/`%`/`.format` into `execute()`/`text()`/`.raw()`/`.extra()`; `subprocess(..., shell=True)`, `os.system`, `eval`/`exec`, `pickle`/`marshal`/`yaml.load`, XML parsers without `defusedxml`, Jinja2 `autoescape=False`/`render_template_string`, SSRF via `requests`/`httpx`/`aiohttp` with request-controlled URLs, `open()`/`send_file` path traversal.',
+  ],
+  S3: [
+    '- Python: audit money/credit/ticket/state transitions for single-transaction execution with `with_for_update()`/`select_for_update()` or conditional UPDATEs; read-then-write across `await`, multiple sessions, and Celery/APScheduler retries or overlapping workers (idempotency keys).',
+    '- Python: audit async races (shared module state, `asyncio.create_task` fire-and-forget, in-process caches/locks that break with multiple workers), Decimal vs float money math, and rounding/overflow in payout code.',
+  ],
+  S4: [
+    '- Python: audit settings/env handling (`pydantic-settings` defaults, hard-coded secrets, `DEBUG=True`, `ALLOWED_HOSTS`, `SECRET_KEY`), response models vs ORM objects, verbose `HTTPException` detail and tracebacks, logging of secrets/tokens, Dockerfile (root user, base image pinning) and uvicorn/gunicorn proxy-header trust.',
+  ],
+  S5: [
+    '- Python: audit `requirements*.txt`, `pyproject.toml`, `poetry.lock`/`uv.lock`/`Pipfile.lock`: unpinned `>=` specifiers and missing hashes mean the build is not reproducible and advisory scans cannot resolve versions; check `--index-url`/`--extra-index-url`, `-e`/`git+` dependencies and CI pip usage. Treat PyPI advisory leads (osv-scanner) as reachability questions.',
+  ],
+  S6: [
+    '- Python-served client surface: audit server-rendered templates (Jinja2 autoescape, `|safe`, `Markup`), CORS/CSP/security headers set by middleware, WebSocket endpoints (handshake auth, Origin, per-message authorization) and what API responses expose to the browser.',
+  ],
+};
+
+const SOLANA_SURFACE = {
+  S3: ['- Solana/Anchor: audit escrow invariants: `Signer` == stored authority, account owner checks, canonical PDA bumps, fixed CPI targets, `reload()` after CPI, closing/initialization and Merkle proof/root attestation rules. In `markdown_summary` add a dedicated "Solana program" paragraph: files reviewed, controls verified, and whether tests or builds actually ran.'],
+  S6: ['- Solana: audit Solana Actions/Blinks (`/actions.json`, `/api/actions/*`) and wallet transaction signing flows.'],
+  S5: ['- Solana: audit verifiable-build pinning (`cargo-build-sbf`, `solana-verify`) and RustSec advisories in `Cargo.lock`.'],
+};
+
+// With a profile, only the detected ecosystems' guidance is emitted; with none, every stack is included.
+export function renderSurfaceSkillGuidance(surfaceCode, profile) {
+  const code = /^S[1-6]$/i.test(String(surfaceCode)) ? String(surfaceCode).toUpperCase() : 'S1';
+  const eco = profile?.ecosystems;
+  const want = (name) => !eco || eco[name]?.detected;
+  const [title, domains] = SURFACE_TITLES[code];
+  const lines = [`### ${code} Skill Focus — ${title} (${domains})`];
+  if (eco) lines.push(`Detected stack: ${eco.primary.join(', ') || 'unknown'}${eco.python?.frameworks?.length ? ` (Python frameworks: ${eco.python.frameworks.join(', ')})` : ''}${eco.solana?.detected ? '; Solana program present' : ''}. Do not apply checks for ecosystems that are absent.`);
+  if (want('python')) lines.push(...PYTHON_SURFACE[code]);
+  if (want('node')) lines.push(...NODE_SURFACE[code]);
+  if (want('solana')) lines.push(...(SOLANA_SURFACE[code] || []));
+  lines.push(
+    '',
     '### Mandatory Cross-Cutting Skill Checks (Apply to Every Surface)',
-    '1. **Scopes & Roles Misvalidation (IDOR / RBAC / Plane Separation)**:',
-    '   - Verify every handler that reads or mutates a resource by ID/wallet checks ownership against the authenticated session wallet.',
-    '   - Verify vertical privilege separation (e.g. admin session + admin host header + wallet signature; guest/demo vs real wallet; free ride vs paid pool).',
-    '2. **Bot / Headless Automation & Economy Integrity**:',
-    '   - Ask: "Can a headless bot, script, or sybil farm break the product idea or drain the prize/reward economy?"',
-    '   - Verify server-side authoritative simulation/replay checks, frame-level proofs, seed lookahead protection, cross-player replay detection, and pool deadline/revocation gates.',
-    '3. **API Abuse & Response DTO / Enumeration Oracles**:',
-    '   - Inspect every controller response DTO and error message (e.g. login/signup/promo returning `"user already registered"`, `"already exists"`, or distinct HTTP status codes).',
-    '   - Double-check if true in source: if an API leaks account/resource existence or internal entity fields (raw ORM models, seeds, flags), report how bots or attackers can abuse it.',
-  ];
-
-  const perSurface = {
-    S1: [
-      '### S1 Skill Focus — Identity, Scopes, Roles & Auth Planes (`http`, `grpc`, `websockets`, `crypto`, `scopes_roles`, `api_dto_abuse`)',
-      '- Audit HTTP/gRPC/WebSocket authentication guards, session cookies (`__Host-`, `httpOnly`, `SameSite`, `Secure`), and CSRF/Origin checks.',
-      '- Audit SIWS / wallet signature verification: challenge byte-for-byte equality, domain binding, single-use nonce, expiry.',
-      '- Audit horizontal IDOR on every `:id` / `:wallet` endpoint and vertical role bypass between player, spectator, crank, and admin planes.',
-      '- Audit auth/login/registration/challenge response DTOs for user/wallet enumeration oracles.',
-    ],
-    S2: [
-      '### S2 Skill Focus — Input Handling, Protocol Parsing & Abuse (`http`, `grpc`, `websockets`, `databases`, `api_dto_abuse`)',
-      '- Audit HTTP `@ZodBody/@ZodQuery/@ZodParams`, gRPC protobuf zero-value traps & message limits, and WebSocket frame validation.',
-      '- Audit SQL/NoSQL/Redis queries, command execution, SSRF, and path traversal sinks.',
-      '- Audit public/batch endpoints (e.g. telemetry upload, blinks/actions) for payload size bounds, rate limits, and malformed batch handling.',
-    ],
-    S3: [
-      '### S3 Skill Focus — Business Logic, Bot/Economy Integrity, DB Locks & Crypto Custody (`bots_economy`, `databases`, `crypto`, `scopes_roles`)',
-      '- Audit all money, credit, ticket, pledge, promo, and ride state transitions: confirm single-transaction execution under `FOR UPDATE` row locks in canonical lock order.',
-      '- Audit bot & headless cheat vectors: forged telemetry, stripped traffic collisions, speed/clock manipulation, copied recordings across riders, seed lookahead before ticket commitment, and abandoned-pledge payout stalls.',
-      '- Audit Solana/Anchor escrow invariants: `Signer` == stored authority, account owner checks, canonical PDA bumps, fixed CPI targets, `reload()` after CPI, and Merkle proof/root attestation rules.',
-    ],
-    S4: [
-      '### S4 Skill Focus — Secrets, Config, Infrastructure & Response DTO Exposure (`api_dto_abuse`, `http`, `grpc`)',
-      '- Audit response DTOs and error filters across all APIs for leaked internal fields, stack traces, secrets, or state enumeration messages.',
-      '- Audit `.env` handling, key custody (crank, payout, mint keys), Dockerfiles, nginx/proxy headers, TLS settings, and gRPC reflection exposure.',
-    ],
-    S5: [
-      '### S5 Skill Focus — Dependencies, Lockfiles, CI & Verifiable Builds (`crypto`, `http`)',
-      '- Audit Rust (`Cargo.lock`) and JS (`package-lock.json`/`yarn.lock`/`pnpm-lock.yaml`) advisories and reachability.',
-      '- Audit GitHub Actions (`pull_request_target`, unpinned actions), install scripts, and Solana verifiable build pinning (`cargo-build-sbf`).',
-    ],
-    S6: [
-      '### S6 Skill Focus — Client, Web Surface, WebSockets, Blinks & Economy Client Boundary (`http`, `websockets`, `crypto`, `bots_economy`, `api_dto_abuse`)',
-      '- Audit DOM XSS sinks, `postMessage` origin checks, CSP/SRI, CORS (`*` vs credentials), and WebSocket CSWSH.',
-      '- Audit Solana Actions / Blinks (`/actions.json`, `/api/actions/*`) and wallet transaction signing flows.',
-      '- Audit what API response DTOs expose to the browser (e.g. hidden seeds, other riders\' live data) and verify client-side checks are never relied upon as security.',
-    ],
-  };
-
-  return [...(perSurface[code] || perSurface.S1), '', ...common].join('\n');
+    '1. **Scopes & Roles Misvalidation (IDOR / RBAC / Plane Separation)**: verify every handler that reads or mutates a resource by ID/wallet checks ownership against the authenticated identity, and that vertical privilege separation (admin vs player, guest/demo vs real wallet) holds.',
+    '2. **Bot / Headless Automation & Economy Integrity**: ask whether a headless bot, script or sybil farm can break the product idea or drain the reward economy; verify server-side authoritative checks, replay/uniqueness, deadlines and revocation gates.',
+    '3. **API Abuse & Response DTO / Enumeration Oracles**: inspect every response DTO and error message (e.g. "user already registered", distinct status codes); report if an API leaks account/resource existence or raw internal fields.',
+  );
+  return lines.join('\n');
 }

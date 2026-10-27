@@ -9,10 +9,16 @@ const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const safePath = value => typeof value === 'string' && value.length <= 1000 && !value.startsWith('/') && value.split('/').every(part => part && !['.', '..'].includes(part)) && !/[\x00-\x1f\\]/.test(value);
 const safeCwd = value => value === '.' || safePath(value);
 
+export const PYTHON_TEST_INTERPRETER = '/work/venv/bin/python';
+const PY_PROJECT_FILE = /^(?:requirements[\w.-]*\.(?:txt|in)|pyproject\.toml|setup\.cfg|setup\.py|pytest\.ini|tox\.ini|Pipfile(?:\.lock)?|poetry\.lock|uv\.lock|\.python-version)$/;
+const PY_TEST_FILE = /(?:^|\/)(?:conftest|test_[^/]*|[^/]*_test)\.py$/;
+
 export function testCommand(kind) {
   if (kind === 'npm') return { command: 'npm', args: ['--offline', '--ignore-scripts', 'run', 'test'], timeoutMs: 90000 };
   // A cold Solana/LiteSVM test build exceeds the small JavaScript suite budget.
   if (kind === 'cargo') return { command: 'cargo', args: ['test', '--locked', '--offline'], timeoutMs: 900000 };
+  // Interpreter and dependencies are prepared by docker/prepare-python-env.py before the network is disconnected.
+  if (kind === 'pytest') return { command: PYTHON_TEST_INTERPRETER, args: ['-m', 'pytest', '-p', 'no:cacheprovider', '-q', '--tb=line'], timeoutMs: 900000 };
   if (kind === 'shell') return { command: 'bash', args: ['--noprofile', '--norc', './test.sh'], timeoutMs: 900000 };
   throw new Error('Unsupported existing test runner');
 }
@@ -32,6 +38,18 @@ export function buildExistingTestCatalog(snapshot, manifest) {
     const id = `test-${hash(`${manifest.digest}:${kind}:${cwd}`).slice(0, 24)}`;
     tests.push({ id, kind, cwd, files: [{ path: file.path, sha256: files.get(file.path).sha256 }], description: `${kind} existing tests in ${cwd}` });
     if (tests.length === 128) break;
+  }
+  // One pytest suite per Python project directory (the nearest ancestor holding a dependency manifest).
+  const projects = new Set(manifest.files.filter(file => PY_PROJECT_FILE.test(path.posix.basename(file.path))).map(file => path.posix.dirname(file.path)));
+  const owner = file => { for (let dir = path.posix.dirname(file); ; dir = path.posix.dirname(dir)) { if (projects.has(dir)) return dir; if (dir === '.') return null; } };
+  const suites = new Map();
+  for (const file of manifest.files) if (PY_TEST_FILE.test(file.path) && owner(file.path) !== null) suites.set(owner(file.path), true);
+  for (const cwd of [...suites.keys()].sort()) {
+    if (tests.length >= 128) break;
+    const inside = file => cwd === '.' || file.path.startsWith(`${cwd}/`);
+    const bound = manifest.files.filter(file => inside(file) && (path.posix.dirname(file.path) === cwd && PY_PROJECT_FILE.test(path.posix.basename(file.path)) || path.posix.basename(file.path) === 'conftest.py')).slice(0, 16);
+    const id = `test-${hash(`${manifest.digest}:pytest:${cwd}`).slice(0, 24)}`;
+    tests.push({ id, kind: 'pytest', cwd, files: bound.map(file => ({ path: file.path, sha256: file.sha256 })), description: `pytest existing tests in ${cwd}` });
   }
   return { version: 1, workflow: REVIEW_WORKFLOW, sourceDigest: manifest.digest, tests };
 }
@@ -59,6 +77,8 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
   if(!stat.isFile()||stat.nlink!==1||crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex')!==file.sha256)throw Error('Existing test manifest changed');
  }
  const cwd=path.resolve(root,entry.cwd);
+ const python=entry.command==='/work/venv/bin/python';
+ if(python&&(!fs.existsSync(entry.command)||fs.readFileSync('/work/venv/project','utf8')!==entry.cwd))throw Error('Python test environment was not prepared for this project (wheel-only dependency install failed or covers another project); the suite is an unverified coverage gap');
  if(cwd!==root&&!cwd.startsWith(root+'/')||fs.realpathSync(cwd)!==cwd)throw Error('Existing test directory changed');
  for(const file of entry.artifacts||[]){
   if(!/^deploy\\/[a-zA-Z0-9_][a-zA-Z0-9_-]*\\.so$/.test(file.path)||!/^([a-f0-9]{64})$/.test(file.sha256))throw Error('Invalid test artifact');
@@ -122,7 +142,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
   // A read-only source mount keeps the default layout; tests then fail with the missing-artifact detail.
   if(!present&&fs.realpathSync(workspace)===workspace)try{fs.symlinkSync('/work/target',link)}catch{}
  }
- const child=spawn(entry.command,entry.args,{cwd,env:{...process.env,CI:'1',CARGO_NET_OFFLINE:'true',GOPROXY:'off',GOSUMDB:'off',npm_config_offline:'true',npm_config_ignore_scripts:'true'},detached:true,stdio:['ignore','pipe','pipe']});
+ const child=spawn(entry.command,entry.args,{cwd,env:{...process.env,CI:'1',CARGO_NET_OFFLINE:'true',GOPROXY:'off',GOSUMDB:'off',npm_config_offline:'true',npm_config_ignore_scripts:'true',...(python?{PYTHONDONTWRITEBYTECODE:'1',PIP_NO_INDEX:'1',VIRTUAL_ENV:'/work/venv',PATH:'/work/venv/bin:'+(process.env.PATH||'')}:{})},detached:true,stdio:['ignore','pipe','pipe']});
  const kill=()=>{try{process.kill(-child.pid,'SIGKILL')}catch{}};
  const timer=setTimeout(()=>{process.exitCode=124;kill()},timeoutMs);
  child.stdout.pipe(process.stdout);child.stderr.pipe(process.stderr);

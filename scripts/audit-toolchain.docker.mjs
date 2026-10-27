@@ -17,7 +17,7 @@ test('provisioned Rust runs real tests offline as non-root with a read-only tool
   const manifest = '[package]\nname="inert-toolchain-fixture"\nversion="0.1.0"\nedition="2021"\n';
   fs.writeFileSync(path.join(root, 'Cargo.toml'), manifest);
   fs.writeFileSync(path.join(root, 'Cargo.lock'), 'version = 3\n[[package]]\nname="inert-toolchain-fixture"\nversion="0.1.0"\n');
-  fs.writeFileSync(path.join(root, 'rust-toolchain.toml'), '[toolchain]\nchannel="1.89.0"\ncomponents=["clippy","rustfmt"]\n');
+  fs.writeFileSync(path.join(root, 'rust-toolchain.toml'), '[toolchain]\nchannel="1.99.1"\ncomponents=["clippy","rustfmt"]\n');
   fs.writeFileSync(path.join(root, 'src/lib.rs'), '#[test]\nfn inert_existing_test() { assert_eq!(2 + 2, 4); }\n');
   const entry = { cwd: '.', command: 'cargo', args: ['test', '--locked', '--offline'], files: [{ path: 'Cargo.toml', sha256: crypto.createHash('sha256').update(manifest).digest('hex') }] };
   const result = spawnSync(resolveDockerBin(), ['run', '--interactive', '--rm', '--pull=never', '--network', 'none', '--read-only', '--user', '10001:10001', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:mode=1777', '--tmpfs', '/work:mode=1777,exec', '--env', 'CARGO_HOME=/work/cargo', '--env', 'CARGO_TARGET_DIR=/work/target', '--mount', `type=bind,src=${root},dst=/work/src,readonly`, '--entrypoint', 'node', 'audit-sandbox:local', '-e', EXISTING_TEST_RUNNER], { encoding: 'utf8', input: JSON.stringify(entry), timeout: 45_000, maxBuffer: 1024 * 1024 });

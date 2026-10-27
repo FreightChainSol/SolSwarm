@@ -2,7 +2,7 @@
 # Disposable sandbox for one audit run.
 # No host secrets, SSH keys, Solana keys, or Docker socket are mounted.
 # The target container sits on an internal network. Its only egress is the
-# allowlist proxy (crates.io, registry.npmjs.org, registry.yarnpkg.com, GitHub, port 443).
+# allowlist proxy (crates.io, registry.npmjs.org, registry.yarnpkg.com, pypi.org, files.pythonhosted.org, GitHub, port 443).
 # A check that cannot be started is written as "impossible" in harness/sandbox.md
 # and appended to harness/summary.md.
 set -u
@@ -262,12 +262,12 @@ docker run -d --name "$PROXY" \
   -v "$SCRIPT_DIR/sandbox-proxy.mjs:/opt/audit/sandbox-proxy.mjs:ro" \
   -v "$SCRIPT_DIR/sandbox-lib.mjs:/opt/audit/sandbox-lib.mjs:ro" \
   -w /opt/audit \
-  node:22-bookworm-slim \
+  node:24-bookworm-slim \
   node /opt/audit/sandbox-proxy.mjs >/dev/null
 
 docker network connect "$NET" "$PROXY"
 PROXY_IP="$(docker inspect -f "{{(index .NetworkSettings.Networks \"$NET\").IPAddress}}" "$PROXY")"
-if [ -z "$PROXY_IP" ]; then
+if [ -z "$PROXY_IP" ] || [ "$PROXY_IP" = "invalid IP" ]; then
   note_blocked "The allowlist proxy has no address on the internal network."
 fi
 
@@ -301,7 +301,7 @@ if ! docker run --rm --name "$INIT" \
   -v "$VOL":/work \
   -v "$RUN":/out \
   audit-sandbox:local \
-  -c 'mkdir -p /work/src /work/cargo /work/target /work/bin && chown -R 10001:10001 /work && chmod 777 /out' \
+  -c 'mkdir -p /work/src /work/cargo /work/target /work/bin /work/uv-cache /work/python && chown -R 10001:10001 /work && chmod 777 /out' \
   >"$RUN/init.log" 2>&1; then
   note_blocked "The sandbox work directory could not be prepared. See harness/sandbox-run/init.log."
 fi
@@ -345,6 +345,7 @@ if ! docker run -d --name "$SBX" \
   -v "$SCRIPT_DIR/harness.mjs:/opt/audit/harness.mjs:ro" \
   -v "$SCRIPT_DIR/audit-plans.mjs:/opt/audit/audit-plans.mjs:ro" \
   -v "$SCRIPT_DIR/scanner-evidence.mjs:/opt/audit/scanner-evidence.mjs:ro" \
+  -v "$SCRIPT_DIR/stack-detect.mjs:/opt/audit/stack-detect.mjs:ro" \
   ${OSV_MOUNTS[@]+"${OSV_MOUNTS[@]}"} \
   ${TOOLS_DIR:+-v "$TOOLS_DIR/.cache/solana:/opt/platform-tools:ro"} \
   ${POCS:+-v "$POCS:/pocs:ro"} \

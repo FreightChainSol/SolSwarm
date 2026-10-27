@@ -14,6 +14,9 @@ export function scannerEvidence(tool, result) {
     }
     if (tool === 'osv-scanner' && Array.isArray(data.results)) findings = data.results.reduce((n, group) => n + group.packages.reduce((m, pkg) => m + (pkg.vulnerabilities || []).length, 0), 0);
     if (tool === 'cargo-audit' && Array.isArray(data.vulnerabilities?.list)) findings = data.vulnerabilities.list.length;
+    // Resolvability record: only written when every Python requirement is exact-pinned or locked.
+    if (tool === 'python-deps' && result.code === 0 && (data.pythonDeps?.unresolved === 0 || data.pythonDeps?.resolvedScan === true)) findings = 0;
+    if (tool === 'node-deps' && result.code === 0 && data.nodeDeps?.unresolved === 0) findings = 0;
     if (tool === 'npm-audit' && data.metadata?.vulnerabilities && data.vulnerabilities && !data.error) findings = Object.keys(data.vulnerabilities).length;
     if (!Number.isSafeInteger(findings) || findings < 0 || result.code === 1 && findings === 0) return row;
     return { ...row, state: findings ? 'findings' : 'passed', findings };
@@ -23,6 +26,12 @@ export function scannerEvidence(tool, result) {
 export function testCounts(stdout) {
   const rust = [...stdout.matchAll(/test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/g)];
   if (rust.length) return rust.reduce((sum, match) => ({ passed: sum.passed + Number(match[1]), failed: sum.failed + Number(match[2]), skipped: sum.skipped + Number(match[3]) }), { passed: 0, failed: 0, skipped: 0 });
+  // pytest -q summary: "3 failed, 120 passed, 2 skipped, 1 error in 4.21s"
+  const pytest = stdout.match(/^=*\s*((?:\d+ (?:passed|failed|skipped|xfailed|xpassed|errors?|deselected|warnings?)(?:, )?)+)\s+in [\d.]+s/m)?.[1];
+  if (pytest) {
+    const n = name => Number(pytest.match(new RegExp('(\\d+) ' + name))?.[1] || 0);
+    return { passed: n('passed'), failed: n('failed') + n('error'), skipped: n('skipped') + n('xfailed') };
+  }
   const value = key => stdout.match(new RegExp('^# ' + key + ' (\\d+)\\s*$', 'm'))?.[1];
   if (value('pass') != null && value('fail') != null) return { passed: Number(value('pass')), failed: Number(value('fail')), skipped: Number(value('skipped') || 0) + Number(value('todo') || 0) };
   return null;

@@ -30,3 +30,19 @@ pub fn take(vault: &AccountInfo) {
     **vault.lamports.borrow_mut() = 0;
     let _ = CpiContext::new_with_signer(program, accounts, seeds);
 }
+
+pub fn sloppy(opt: Option<u64>, amount: u64) {
+    token::transfer(ctx, amount)?;
+    let _ = amount.wrapping_add(1);
+    let _ = amount as u32;
+    let _ = opt.unwrap();
+    system_program::transfer(cpi, amount)?;
+    let _ = Clock::get()?.unix_timestamp;
+    set_authority(ctx, AuthorityType::AccountOwner, None)?;
+}
+
+#[account(mut, realloc = 100, realloc::payer = payer, realloc::zero = false)]
+pub struct Grow {}
+
+/// CHECK: supplied by the caller
+pub struct Loose {}

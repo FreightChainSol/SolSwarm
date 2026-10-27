@@ -45,10 +45,10 @@ const SANDBOX_SCRIPT = path.join(HERE, 'sandbox.sh');
 
 const SURFACES = [
   { id: 's1', code: 'S1', slug: 'auth', name: 'Identity, Scopes & Access Control', focus: 'authentication (HTTP/gRPC/WebSockets/SIWS), session/cookie flags, horizontal IDOR & scope misvalidation, vertical role/admin plane bypass, CSRF/CSWSH, login/register response DTO enumeration oracles, Solana signer/owner/authority checks' },
-  { id: 's2', code: 'S2', slug: 'input', name: 'Input Handling, Protocols & Injection', focus: 'HTTP/gRPC/WebSocket input validation, protobuf zero-value traps & stream floods, SQL/NoSQL/Redis/command injection, deserialization, SSRF, path traversal, batch/rate abuse, Solana instruction data & account cosplay' },
+  { id: 's2', code: 'S2', slug: 'input', name: 'Input Handling, Protocols & Injection', focus: 'HTTP/gRPC/WebSocket input validation, protobuf zero-value traps & stream floods, SQL/NoSQL/Redis/command injection (incl. Python f-string SQL, shell=True, pickle/yaml), deserialization, SSRF, path traversal, batch/rate abuse, Solana instruction data & account cosplay' },
   { id: 's3', code: 'S3', slug: 'logic', name: 'Business Logic, Bot/Economy Integrity & Custody', focus: 'source inspection of server authority, replay uniqueness, economic state transitions, DB transaction boundaries and row locks, Solana/Anchor custody and Merkle proof invariants' },
   { id: 's4', code: 'S4', slug: 'config', name: 'Secrets, Config, Infra & Response DTO Leakage', focus: 'over-broad response DTOs leaking internal fields/seeds/hashes, error/status enumeration oracles, hard-coded secrets, key custody, Docker/CI/nginx/TLS hardening, gRPC reflection exposure' },
-  { id: 's5', code: 'S5', slug: 'deps', name: 'Dependencies, Lockfiles & Supply Chain', focus: 'manifests and lockfiles, vulnerable crates/packages, install/postinstall scripts, unpinned CI actions, vendored code, verifiable Solana builds' },
+  { id: 's5', code: 'S5', slug: 'deps', name: 'Dependencies, Lockfiles & Supply Chain', focus: 'manifests and lockfiles (Cargo, npm, PyPI requirements/pyproject), unpinned or non-index Python requirements, vulnerable crates/packages, install/postinstall scripts, unpinned CI actions, vendored code, verifiable Solana builds' },
   { id: 's6', code: 'S6', slug: 'client', name: 'Client, Web Surface, Realtime & Wallet Flows', focus: 'DOM XSS sinks, postMessage/origin checks, CSP/SRI, CORS, WebSocket room/stream IDOR, Solana Actions/Blinks, wallet signing flows, client-side trust boundaries & exposed DTO fields' },
 ];
 
@@ -116,7 +116,9 @@ function readHarnessContext(reportDir, surfaceCode) {
   const read = (name, max = 3500) => {
     try { return fs.readFileSync(path.join(hDir, name), 'utf8').slice(0, max); } catch { return ''; }
   };
-  const blocks = [renderSurfaceSkillGuidance(surfaceCode)];
+  let stackProfile;
+  try { stackProfile = JSON.parse(fs.readFileSync(path.join(hDir, 'stack-profile.json'), 'utf8')); } catch { /* guidance falls back to every stack */ }
+  const blocks = [renderSurfaceSkillGuidance(surfaceCode, stackProfile)];
   const summary = read('summary.md', 4000);
   if (summary) blocks.push('### Harness & Sandbox Summary\n' + summary);
   try {
@@ -131,6 +133,10 @@ function readHarnessContext(reportDir, surfaceCode) {
   } catch { /* ignore */ }
   const solana = read('solana.md', 3000);
   if (solana && !solana.includes('Solana surface absent')) blocks.push('### Solana Leads\n' + solana);
+  const python = read('python.md', 4000);
+  if (python && !python.includes('Python surface absent') && ['S1', 'S2', 'S3', 'S4'].includes(surfaceCode)) blocks.push('### Python Leads\n' + python);
+  const nodeLeads = read('node.md', 4000);
+  if (nodeLeads && !nodeLeads.includes('Node surface absent') && ['S1', 'S2', 'S4', 'S6'].includes(surfaceCode)) blocks.push('### Node Leads\n' + nodeLeads);
   if (['S1', 'S2', 'S6'].includes(surfaceCode)) {
     const web = read('web.md', 2500);
     if (web && !web.includes('Web surface absent')) blocks.push('### Web Leads\n' + web);

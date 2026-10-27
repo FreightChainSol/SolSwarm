@@ -36,6 +36,9 @@ test('allowlist is exact hostnames and public addresses', () => {
   assert.equal(hostAllowed('index.crates.io'), true);
   assert.equal(hostAllowed('registry.npmjs.org'), true);
   assert.equal(hostAllowed('registry.yarnpkg.com'), true);
+  assert.equal(hostAllowed('pypi.org'), true);
+  assert.equal(hostAllowed('files.pythonhosted.org'), true);
+  assert.equal(hostAllowed('pypi.org.evil.test'), false);
   assert.equal(hostAllowed('evil.yarnpkg.com'), false);
   assert.equal(hostAllowed('GitHub.com'), true);
   assert.equal(hostAllowed('objects.githubusercontent.com'), true);

@@ -3,3 +3,6 @@ jobs:
   build:
     steps:
       - uses: actions/checkout@8ade3b6b7e0a1c2d3e4f50617890abcdef12345678
+      - uses: actions/setup-node@8ade3b6b7e0a1c2d3e4f50617890abcdef12345678
+        with:
+          node-version: 24

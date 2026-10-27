@@ -79,6 +79,8 @@ const ALLOW = new Set([
   'static.crates.io',
   'registry.npmjs.org',
   'registry.yarnpkg.com',
+  'pypi.org',
+  'files.pythonhosted.org',
   'github.com',
   'api.github.com',
   'codeload.github.com',
@@ -211,7 +213,8 @@ export function plan(root) {
   for (const f of files) {
     if (f.rel.endsWith('/Cargo.lock') || f.rel === 'Cargo.lock') cargoLocks.push(f.rel);
     if (f.rel.endsWith('/yarn.lock') || f.rel === 'yarn.lock') yarnLocks.push(f.rel);
-    const eco = OSV_NAME.get(f.rel.split('/').pop());
+    const name = f.rel.split('/').pop();
+    const eco = OSV_NAME.get(name) || (/^requirements[\w.-]*\.txt$/.test(name) ? 'PyPI' : undefined);
     if (eco && osvExtra.length < 8) osvExtra.push({ rel: f.rel, ecosystem: eco });
     if (shallow(f.rel, 'build.sh')) buildScripts.push(f.rel);
     if (shallow(f.rel, 'test.sh')) testScripts.push(f.rel);
@@ -356,7 +359,7 @@ export function render(checks, note) {
   const lines = [
     '# Sandbox',
     '',
-    'Disposable container. Host home and the Docker socket are not mounted. Named secret files are excluded, but arbitrary source files may still contain secrets. Egress is an allowlist proxy for crates.io, registry.npmjs.org, registry.yarnpkg.com, and GitHub; this limits destinations, not data leaving to allowed hosts. Target processes share writable result storage with the sandbox reporter, so rows are sandbox-reported, not authenticated evidence. OpenSSL build scripts use the image library. PyPI, Go, and Maven databases are downloaded on the host when those lockfiles exist and mounted read-only. A pinned Solana version prefetches platform-tools on the host. Deployed bytes are compared only when --rpc is passed. The container and its network are removed at the end.',
+    'Disposable container. Host home and the Docker socket are not mounted. Named secret files are excluded, but arbitrary source files may still contain secrets. Egress is an allowlist proxy for crates.io, registry.npmjs.org, registry.yarnpkg.com, pypi.org, files.pythonhosted.org, and GitHub; this limits destinations, not data leaving to allowed hosts. Target processes share writable result storage with the sandbox reporter, so rows are sandbox-reported, not authenticated evidence. OpenSSL build scripts use the image library. A Python test project gets a wheel-only environment (no sdist build, no target code) on the Python version it declares before the network is detached. PyPI, Go, and Maven databases are downloaded on the host when those lockfiles exist and mounted read-only. A pinned Solana version prefetches platform-tools on the host. Deployed bytes are compared only when --rpc is passed. The container and its network are removed at the end.',
     '',
     '`ran` means the command finished (a scanner exit 1 means it reported advisories). `failed` means the command was started and exited non-zero. `impossible` means it was not started. Logs are under `harness/sandbox-run/`. Built programs are copied to `files/` before the work volume is removed.',
     '',

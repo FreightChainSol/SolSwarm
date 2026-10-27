@@ -1,6 +1,6 @@
 # SolSwarm: Multi-Agent Source Security Review Suite
 
-SolSwarm is an automated, multi-agent security review and audit swarm designed for Solana programs, Rust crates, TypeScript/JavaScript services, smart contracts, and Web3 applications. It coordinates frontier AI models—Claude, Codex, Grok, and AGY—in parallel, inspecting source code, configuration, dependency lockfiles, and existing test suites inside disposable, airgapped Docker sandboxes using restricted Model Context Protocol (MCP) bridges.
+SolSwarm is an automated, multi-agent security review and audit swarm designed for Solana programs, Rust crates, Python (FastAPI/Django/Flask) and TypeScript/JavaScript services, smart contracts, and Web3 applications. It coordinates frontier AI models—Claude, Codex, Grok, and AGY—in parallel, inspecting source code, configuration, dependency lockfiles, and existing test suites inside disposable, airgapped Docker sandboxes using restricted Model Context Protocol (MCP) bridges.
 
 `solswarm run` (or `audit run`) enforces the `source_security_review_v1` workflow. Reviewers inspect captured source, consult static leads, run fixed existing test suites inside an offline container, submit structured evidence-backed reports, and peer cross-check each other's claims. The bridge rejects arbitrary shell commands, runtime exploit generation, and live network access.
 
@@ -62,7 +62,7 @@ npm test              # Executes test suite
 ## Workflow and Boundaries
 
 1. **Capture & Seal:** Source is captured into sealed copies with a SHA-256 manifest and explicit omissions (secrets, `.env*`, build artifacts, credentials). An immutable catalog of existing tests is created before any model is prompted.
-2. **Container Preparation:** Starts a disposable `audit-sandbox:local` container as unprivileged `uid 10001` with dropped capabilities. Networked preflight executes trusted static scanners (Gitleaks, Semgrep, OSV Scanner, cargo-audit, npm audit) without executing target code or builds.
+2. **Container Preparation:** Starts a disposable `audit-sandbox:local` container as unprivileged `uid 10001` with dropped capabilities. Networked preflight executes trusted static scanners (Gitleaks, Semgrep, OSV Scanner, cargo-audit, npm audit, a Python requirement-pinning check) without executing target code or builds.
 3. **Airgap Verification:** Disconnects the Docker container from the network before reviewer access. All subsequent test requests check the actual Docker network state.
 4. **Parallel Surface Review:** Surfaces are reviewed in parallel across providers (one active assignment per provider with remaining surfaces queued). Reviewers cite `file:line` evidence, impact, preconditions, source analysis, validation limits, and defensive remediation.
 5. **Peer Cross-Check & Adjudication:** Reviewers cross-check peer claims in parallel, submitting claim-level verdicts (`upheld`, `partial`, `refuted`). A canonical report commit is validated and derived into structured JSON, Markdown, and standalone HTML reports.
@@ -79,7 +79,7 @@ npm test              # Executes test suite
 | `submit_audit_report` | Commit validated source findings and reviewed control assertions. |
 | `submit_crosscheck_report` | Commit a verdict with citations and reasoning for assigned peer claims. |
 
-Arbitrary execution, PoC generation, and external RPC tools are strictly denied. Existing tests run inside the offline container using fixed recognized runners (`npm --offline --ignore-scripts run test`, `cargo test --locked --offline`, `bash --noprofile --norc ./test.sh`).
+Arbitrary execution, PoC generation, and external RPC tools are strictly denied. Existing tests run inside the offline container using fixed recognized runners (`npm --offline --ignore-scripts run test`, `cargo test --locked --offline`, `python -m pytest -p no:cacheprovider -q --tb=line` (wheel-only environment on the project's declared Python version, prepared before the network is detached), `bash --noprofile --norc ./test.sh`).
 
 For Solana programs, SBF `cdylib` programs are compiled offline into `/work/target/deploy/*.so` using provisioned Solana platform-tools before Cargo/shell tests execute, or operator-supplied artifacts can be passed via `--test-artifacts`.
 
