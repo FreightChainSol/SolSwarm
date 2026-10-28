@@ -205,7 +205,7 @@ export function execInContainer(dockerBin, container, args, { cwd = '/work/src',
     const stdout = boundedCapture(maxBytes, keepTail);
     const stderr = boundedCapture(maxBytes, keepTail);
     const done = (code, stderrText = stderr.text()) => resolve({ code, stdout: stdout.text(), stderr: stderrText, omittedBytes: stdout.omitted + stderr.omitted });
-    const timer = setTimeout(() => { child.kill('SIGKILL'); }, Math.min(Math.max(1000, timeoutMs), 910_000));
+    const timer = setTimeout(() => { child.kill('SIGKILL'); }, Math.min(Math.max(1000, timeoutMs), 1_810_000));
     child.stdout.on('data', (c) => stdout.push(c));
     child.stderr.on('data', (c) => stderr.push(c));
     child.on('error', (err) => { clearTimeout(timer); done(127, err.message); });

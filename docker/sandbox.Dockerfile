@@ -144,6 +144,30 @@ RUN mkdir -p /tmp/osv-seed /opt/osv-cache \
 # runtime through the npm-registry allowlist.
 RUN corepack prepare yarn@1.22.22 --activate && yarn --version
 
+# Server binaries for suites that start a disposable PostgreSQL themselves
+# (initdb + pg_ctl on a Unix socket under /tmp), which works with the network
+# disconnected. No cluster is created in the image and none runs by default.
+# PG_BINDIR is the conventional override; the links serve PATH discovery.
+ARG POSTGRES_MAJOR=16
+RUN curl -fsSL -o /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    && gpg --batch --show-keys --with-colons /tmp/pgdg.asc | grep -qx 'fpr:::::::::B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8:' \
+    && install -d /usr/share/postgresql-common/pgdg /etc/postgresql-common \
+    && gpg --batch --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg /tmp/pgdg.asc \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && echo 'create_main_cluster = false' > /etc/postgresql-common/createcluster.conf \
+    && apt-get update && apt-get install -y --no-install-recommends "postgresql-${POSTGRES_MAJOR}" \
+    && rm -rf /var/lib/apt/lists/* /tmp/pgdg.asc \
+    && for bin in initdb pg_ctl postgres; do ln -sf "/usr/lib/postgresql/${POSTGRES_MAJOR}/bin/${bin}" "/usr/local/bin/${bin}"; done \
+    && test -z "$(ls -A /etc/postgresql 2>/dev/null)" \
+    && initdb --version && pg_ctl --version
+ENV PG_BINDIR=/usr/lib/postgresql/${POSTGRES_MAJOR}/bin
+
+# Same pattern for suites that start their own redis-server on a Unix socket.
+# Debian's package starts nothing without an init system.
+RUN apt-get update && apt-get install -y --no-install-recommends redis-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && redis-server --version
+
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin sandbox
 
 COPY entrypoint.sh /usr/local/bin/sandbox-entrypoint

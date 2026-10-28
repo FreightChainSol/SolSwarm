@@ -81,7 +81,7 @@ npm test              # Executes test suite
 
 Arbitrary execution, PoC generation, and external RPC tools are strictly denied. Existing tests run inside the offline container using fixed recognized runners (`npm --offline --ignore-scripts run test`, `cargo test --locked --offline`, `python -m pytest -p no:cacheprovider -q --tb=line` (wheel-only environment on the project's declared Python version, prepared before the network is detached), `bash --noprofile --norc ./test.sh`).
 
-For Solana programs, SBF `cdylib` programs are compiled offline into `/work/target/deploy/*.so` using provisioned Solana platform-tools before Cargo/shell tests execute, or operator-supplied artifacts can be passed via `--test-artifacts`.
+For Solana programs, SBF `cdylib` programs are compiled offline into `/work/target/deploy/*.so` using provisioned Solana platform-tools before Cargo/shell tests execute, or operator-supplied artifacts (`deploy/*.so`, Anchor `idl/*.json`) can be passed via `--test-artifacts`. The sandbox image carries PostgreSQL 16 (`PG_BINDIR=/usr/lib/postgresql/16/bin`) and `redis-server` so suites that start their own disposable servers on Unix sockets run offline; review mode fetches each `package-lock.json` project's packages with `npm ci --ignore-scripts` after the static scanners.
 
 ## Six Review Surfaces
 

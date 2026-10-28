@@ -26,20 +26,23 @@ export function scannerEvidence(tool, result) {
 export function testCounts(stdout) {
   const rust = [...stdout.matchAll(/test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/g)];
   if (rust.length) return rust.reduce((sum, match) => ({ passed: sum.passed + Number(match[1]), failed: sum.failed + Number(match[2]), skipped: sum.skipped + Number(match[3]) }), { passed: 0, failed: 0, skipped: 0 });
-  // pytest -q summary: "3 failed, 120 passed, 2 skipped, 1 error in 4.21s"
-  const pytest = stdout.match(/^=*\s*((?:\d+ (?:passed|failed|skipped|xfailed|xpassed|errors?|deselected|warnings?)(?:, )?)+)\s+in [\d.]+s/m)?.[1];
+  // pytest -q summary: "3 failed, 120 passed, 2 skipped, 1 error, 26 subtests passed in 4.21s"
+  const pytest = stdout.match(/^=*\s*((?:\d+ [a-z]+(?: [a-z]+)?(?:, )?)+)\s+in [\d.]+s/m)?.[1];
   if (pytest) {
-    const n = name => Number(pytest.match(new RegExp('(\\d+) ' + name))?.[1] || 0);
-    return { passed: n('passed'), failed: n('failed') + n('error'), skipped: n('skipped') + n('xfailed') };
+    const n = name => Number(pytest.match(new RegExp('(?:^|, )(\\d+) ' + name + '(?:,|$)'))?.[1] || 0);
+    return { passed: n('passed'), failed: n('failed') + n('errors?'), skipped: n('skipped') + n('xfailed') };
   }
   const value = key => stdout.match(new RegExp('^# ' + key + ' (\\d+)\\s*$', 'm'))?.[1];
   if (value('pass') != null && value('fail') != null) return { passed: Number(value('pass')), failed: Number(value('fail')), skipped: Number(value('skipped') || 0) + Number(value('todo') || 0) };
   return null;
 }
-// pytest --tb=line prints one "E   <message>" line per failure; a shared cause names the coverage gap.
+// pytest prints "E   <message>" under tracebacks and "FAILED|ERROR <test> - <message>" in its short
+// summary; a shared cause names the coverage gap. Summary lines win when present.
 export function dominantTestFailure(stdout) {
   const counts = new Map();
-  for (const [, message] of String(stdout).matchAll(/^E {3}(\S.{0,199})/gm)) counts.set(message, (counts.get(message) || 0) + 1);
+  const text = String(stdout);
+  const summary = [...text.matchAll(/^(?:FAILED|ERROR) \S+ - (\S.{0,199})/gm)];
+  for (const [, message] of summary.length ? summary : text.matchAll(/^E {3}(\S.{0,199})/gm)) counts.set(message, (counts.get(message) || 0) + 1);
   const [message, count] = [...counts].sort((a, b) => b[1] - a[1])[0] || [];
   return count >= 2 ? { message, count } : null;
 }

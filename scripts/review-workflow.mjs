@@ -18,7 +18,8 @@ export function testCommand(kind) {
   // A cold Solana/LiteSVM test build exceeds the small JavaScript suite budget.
   if (kind === 'cargo') return { command: 'cargo', args: ['test', '--locked', '--offline'], timeoutMs: 900000 };
   // Interpreter and dependencies are prepared by docker/prepare-python-env.py before the network is disconnected.
-  if (kind === 'pytest') return { command: PYTHON_TEST_INTERPRETER, args: ['-m', 'pytest', '-p', 'no:cacheprovider', '-q', '--tb=line'], timeoutMs: 900000 };
+  // Python suites that start disposable PostgreSQL/Redis servers outgrow the Cargo budget.
+  if (kind === 'pytest') return { command: PYTHON_TEST_INTERPRETER, args: ['-m', 'pytest', '-p', 'no:cacheprovider', '-q', '--tb=line'], timeoutMs: 1800000 };
   if (kind === 'shell') return { command: 'bash', args: ['--noprofile', '--norc', './test.sh'], timeoutMs: 900000 };
   throw new Error('Unsupported existing test runner');
 }
@@ -69,7 +70,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
  let input='';for await(const chunk of process.stdin)input+=chunk;
  const entry=JSON.parse(input),root='/work/src';
  const timeoutMs=entry.timeoutMs??90000;
- if(![90000,900000].includes(timeoutMs))throw Error('Invalid existing test time limit');
+ if(![90000,900000,1800000].includes(timeoutMs))throw Error('Invalid existing test time limit');
  for(const file of entry.files){
   const target=path.resolve(root,file.path);
   if(!target.startsWith(root+'/')||fs.realpathSync(target)!==target)throw Error('Existing test file path changed');
@@ -81,7 +82,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
  if(python&&(!fs.existsSync(entry.command)||fs.readFileSync('/work/venv/project','utf8')!==entry.cwd))throw Error('Python test environment was not prepared for this project (wheel-only dependency install failed or covers another project); the suite is an unverified coverage gap');
  if(cwd!==root&&!cwd.startsWith(root+'/')||fs.realpathSync(cwd)!==cwd)throw Error('Existing test directory changed');
  for(const file of entry.artifacts||[]){
-  if(!/^deploy\\/[a-zA-Z0-9_][a-zA-Z0-9_-]*\\.so$/.test(file.path)||!/^([a-f0-9]{64})$/.test(file.sha256))throw Error('Invalid test artifact');
+  if(!/^(?:deploy\\/[a-zA-Z0-9_][a-zA-Z0-9_-]*\\.so|idl\\/[a-zA-Z0-9_][a-zA-Z0-9_-]*\\.json)$/.test(file.path)||!/^([a-f0-9]{64})$/.test(file.sha256))throw Error('Invalid test artifact');
   const source='/out/test-artifacts/'+file.path;
   const bytes=fs.readFileSync(source);
   if(fs.realpathSync(source)!==source||crypto.createHash('sha256').update(bytes).digest('hex')!==file.sha256)throw Error('Test artifact changed');
@@ -91,8 +92,9 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
   const fd=fs.openSync(target,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK,0o644);
   try{const stat=fs.fstatSync(fd);if(!stat.isFile()||stat.nlink!==1)throw Error('Test artifact destination changed');fs.ftruncateSync(fd,0);fs.writeFileSync(fd,bytes)}finally{fs.closeSync(fd)}
  }
- const programs=[];
- if(['cargo','bash'].includes(entry.command)){
+ const programs=[],builds=['cargo','bash'].includes(entry.command);
+ // Other runners (pytest fixtures reading target/idl) still need the workspace target link.
+ if(builds||(entry.artifacts||[]).length){
   const manifests=[],skip=new Set(['.git','node_modules','target','dist','.cargo']);
   (function walk(dir,depth){
    if(depth>4)return;
@@ -114,7 +116,8 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
    programs.push({manifest,dir,lib});
   }
  }
- if(!(entry.artifacts&&entry.artifacts.length)&&fs.existsSync('/opt/platform-tools/rust/bin/cargo')){
+ // Supplied program bytes replace the SBF build; an IDL-only import still builds the programs.
+ if(builds&&!(entry.artifacts||[]).some(file=>file.path.startsWith('deploy/'))&&fs.existsSync('/opt/platform-tools/rust/bin/cargo')){
   for(const {manifest,dir,lib} of programs){
    if(lib&&fs.existsSync(path.join('/work/target/deploy',lib+'.so')))continue;
    const sbfEnv={...process.env,CI:'1',CARGO_NET_OFFLINE:'true',CARGO_TARGET_DIR:'/work/target',RUSTC:'/opt/platform-tools/rust/bin/rustc',RUSTFLAGS:'-C strip=debuginfo',PATH:'/opt/platform-tools/rust/bin:/opt/platform-tools/llvm/bin:'+(process.env.PATH||'/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin')};
@@ -130,7 +133,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
  }
  // Tests commonly load <workspace>/target/deploy/*.so; CARGO_TARGET_DIR moved that output to /work/target.
  // Point an absent workspace target at it in the disposable source copy; an existing target is left alone.
- if(fs.existsSync('/work/target/deploy'))for(const {dir} of programs){
+ if(fs.existsSync('/work/target/deploy')||fs.existsSync('/work/target/idl'))for(const {dir} of programs){
   let workspace=dir;
   for(let d=dir;d===root||d.startsWith(root+'/');d=path.dirname(d)){
    const toml=path.join(d,'Cargo.toml');

@@ -33,6 +33,22 @@ test('explicit artifacts are frozen and source-bound without importing deploymen
   assert.throws(() => selectTestArtifacts({ ...manifest, files: [{ path: '../outside.so', sha256: 'c'.repeat(64) }] }, 'a'.repeat(64)), /Invalid/);
 });
 
+test('an Anchor IDL is imported beside program bytes and a keypair-shaped JSON is refused', t => {
+  const f = fixture(t);
+  fs.mkdirSync(path.join(f.input, 'idl'));
+  fs.writeFileSync(path.join(f.input, 'idl/program.json'), JSON.stringify({ address: 'x', instructions: [] }));
+  const manifest = stageTestArtifacts(f.input, f.report, 'a'.repeat(64));
+  assert.deepEqual(manifest.files.map(file => file.path), ['deploy/program.so', 'idl/program.json']);
+  assert.equal(selectTestArtifacts(manifest, 'a'.repeat(64)).length, 2);
+  const idlOnly = fixture(t);
+  fs.rmSync(path.join(idlOnly.input, 'deploy'), { recursive: true });
+  fs.mkdirSync(path.join(idlOnly.input, 'idl'));
+  fs.writeFileSync(path.join(idlOnly.input, 'idl/program.json'), JSON.stringify([1, 2, 3]));
+  assert.throws(() => stageTestArtifacts(idlOnly.input, idlOnly.report, 'a'.repeat(64)), /not an Anchor IDL/);
+  fs.writeFileSync(path.join(idlOnly.input, 'idl/program.json'), JSON.stringify({ instructions: [] }));
+  assert.deepEqual(stageTestArtifacts(idlOnly.input, idlOnly.report, 'a'.repeat(64)).files.map(file => file.path), ['idl/program.json']);
+});
+
 test('symlinked, hardlinked and non-ELF program artifacts are refused', t => {
   for (const mode of ['symlink', 'hardlink', 'invalid']) {
     const f = fixture(t);
