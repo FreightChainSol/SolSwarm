@@ -9,11 +9,15 @@ export const REVIEW_IMAGE = 'node@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e3395
 export const ADAPTERS = ['claude', 'grok', 'agy', 'codex'];
 export const LIMITS = Object.freeze({ fileBytes: 2 * 1024 * 1024, totalBytes: 512 * 1024 * 1024, files: 40_000, entries: 400_000, depth: 32, outputBytes: 4 * 1024 * 1024, logBytes: 1024 * 1024 });
 const SLUGS = ['auth', 'input', 'logic', 'config', 'deps', 'client'];
-const SKIP_DIRS = new Set(['docs', 'doc', 'social', 'media', 'assets', 'public', 'static', 'fixtures', '__snapshots__', 'vendor', 'venv', '.venv', 'out', '.turbo', '.cache', '.idea', '.vscode', 'swagger', 'openapi', '.git', 'node_modules', 'target', 'dist', 'build', '.next', 'coverage', '__pycache__', '.cargo', '.ssh', '.aws', '.docker', '.kube', '.grok', '.codex', '.gemini', '.agy', 'secrets']);
-const SKIP_PATHS = new Set(['.claude/worktrees', 'tests/audit/reports', 'audit/reports', 'audit/pocs', 'audit/theme-previews', 'docs/reviews']);
-const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.json', '.yaml', '.yml', '.toml', '.rs', '.go', '.py', '.rb', '.php', '.java', '.kt', '.cs', '.c', '.h', '.cpp', '.hpp', '.sql', '.html', '.sh', '.lock', '.prisma', '.proto', '.xml', '.properties', '.gradle', '.scala', '.swift', '.vue', '.svelte', '.graphql', '.ini', '.cfg', '.tf', '.tfvars', '.hcl', '.lua', '.sol', '.vy', '.move', '.cairo', '.dockerfile', '.mk']);
+const SKIP_DIRS = new Set(['__snapshots__', 'vendor', 'venv', '.venv', 'out', '.turbo', '.cache', '.idea', '.vscode', '.git', 'node_modules', 'target', 'dist', 'build', '.next', 'coverage', '__pycache__', '.cargo', '.ssh', '.aws', '.docker', '.kube', '.grok', '.codex', '.gemini', '.agy', 'secrets']);
+const SKIP_PATHS = new Set(['.claude/worktrees', 'docs', 'doc', 'social', 'tests/audit', 'tests/audit/reports', 'audit/reports', 'audit/pocs', 'audit/theme-previews', 'docs/reviews']);
+const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.json', '.yaml', '.yml', '.toml', '.rs', '.go', '.py', '.rb', '.php', '.java', '.kt', '.cs', '.c', '.h', '.cpp', '.hpp', '.sql', '.html', '.sh', '.lock', '.prisma', '.proto', '.xml', '.properties', '.gradle', '.scala', '.swift', '.vue', '.svelte', '.graphql', '.ini', '.cfg', '.tf', '.tfvars', '.hcl', '.lua', '.sol', '.vy', '.move', '.cairo', '.dockerfile', '.mk', '.css', '.txt', '.webmanifest', '.md']);
 // Documentation, API specs, bundles and generated artifacts are not audit source.
-const SKIP_NAME = /^(readme|changelog|license|licence|notice|authors|contributors|code_of_conduct|security)(\..*)?$|^(swagger|openapi)[^/]*\.(json|ya?ml)$|\.(min\.js|min\.css|map|d\.ts|snap|log)$|^(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/i;
+// Lockfiles stay: the sandbox installs test dependencies from them and the dependency scanners read them.
+// SKIP_DIRS match a directory name at any depth, so only generic output names belong there; names that
+// can also be real source (docs, social, openapi) are anchored in SKIP_PATHS to the repository root.
+// Fixtures and public/ stay: existing tests read them at run or compile time.
+const SKIP_NAME = /^(readme|changelog|license|licence|notice|authors|contributors|code_of_conduct|security)(\..*)?$|^(swagger|openapi)[^/]*\.(json|ya?ml)$|\.(min\.js|min\.css|map|d\.ts|snap|log)$/i;
 const OWNED = new Map();
 const CAPTURES = new WeakMap();
 export const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
@@ -91,7 +95,7 @@ export function createSnapshot(source, { exclude = [], limits = LIMITS, only = n
       if (secretName(name) || next === '.claude/settings.json') { omit(next, 'credential_name'); continue; }
       if (stat.nlink !== 1) { omit(next, 'hardlink'); continue; }
       if (SKIP_NAME.test(name)) { omit(next, 'non_code_artifact'); continue; }
-      const text = TEXT_EXT.has(path.extname(name).toLowerCase()) || /^(requirements[\w.-]*\.txt|constraints\.txt|Dockerfile(?:\..*)?|Makefile|Cargo\.lock|go\.mod|go\.sum)$/.test(name);
+      const text = TEXT_EXT.has(path.extname(name).toLowerCase()) || /^(\.dockerignore|requirements[\w.-]*\.txt|constraints\.txt|Dockerfile(?:\..*)?|Makefile|Cargo\.lock|go\.mod|go\.sum)$/.test(name);
       if (!text) { omit(next, 'non_source_extension'); continue; }
       if (stat.size > limits.fileBytes) { omit(next, 'file_byte_limit'); continue; }
       // Check descriptor identity and containment; seal exactly the bytes copied,
