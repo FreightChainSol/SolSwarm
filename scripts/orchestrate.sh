@@ -232,5 +232,9 @@ if [ -f "$OUTPUT_DIR/meta.json" ]; then
   # HTML generation revalidates and scores current inputs before rendering.
   node "$SCRIPT_DIR/generate-html-report.mjs" "$OUTPUT_DIR" || code=2
 fi
-echo "Audit report saved to: $OUTPUT_DIR"
+if [ "$code" -ne 0 ]; then
+  echo "AUDIT FAILED (exit $code); partial output at: $OUTPUT_DIR" >&2
+else
+  echo "Audit report saved to: $OUTPUT_DIR"
+fi
 exit "$code"

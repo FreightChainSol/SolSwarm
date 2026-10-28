@@ -12,7 +12,7 @@ const scripts = path.dirname(fileURLToPath(import.meta.url));
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-isolation-unit-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, 'sample.txt'), 'alpha\n');
+  fs.writeFileSync(path.join(root, 'sample.js'), 'alpha\n');
   return root;
 }
 const jobFor = (snapshot, extra = {}) => createJob({ adapter: 'claude', model: 'requested-model', sourceDigest: snapshot.manifest.digest, runtimeDigest: runtimeDigest(), ...extra });
@@ -22,12 +22,12 @@ test('snapshots record explicit omissions without copying named credentials or l
   for (const name of ['.env', '.env.example', '.npmrc', 'wallet-keypair.json', 'auth.json']) fs.writeFileSync(path.join(source, name), 'dummy fixture');
   fs.mkdirSync(path.join(source, 'secrets'));
   fs.writeFileSync(path.join(source, 'secrets', 'fixture.txt'), 'dummy fixture');
-  fs.symlinkSync(path.join(source, 'sample.txt'), path.join(source, 'linked.txt'));
+  fs.symlinkSync(path.join(source, 'sample.js'), path.join(source, 'linked.js'));
   fs.writeFileSync(path.join(source, 'image.png'), 'inert bytes');
   const snapshot = createSnapshot(source);
   t.after(() => disposeSnapshot(snapshot));
-  assert.deepEqual(snapshot.manifest.files.map((f) => f.path), ['sample.txt']);
-  assert.equal(snapshot.manifest.omissions.find((r) => r.path === 'linked.txt').reason, 'symlink');
+  assert.deepEqual(snapshot.manifest.files.map((f) => f.path), ['sample.js']);
+  assert.equal(snapshot.manifest.omissions.find((r) => r.path === 'linked.js').reason, 'symlink');
   assert.equal(snapshot.manifest.secretFree, 'not_guaranteed');
   assert.equal(snapshot.manifest.digest, hash(JSON.stringify(snapshot.manifest.files)));
 });
@@ -36,10 +36,10 @@ test('captured source uses fresh inodes and is unchanged by later checkout write
   const source = fixture(t);
   const snapshot = createSnapshot(source);
   t.after(() => disposeSnapshot(snapshot));
-  const copy = path.join(snapshot.snapshot, 'sample.txt');
-  assert.notEqual(fs.statSync(copy).ino, fs.statSync(path.join(source, 'sample.txt')).ino);
+  const copy = path.join(snapshot.snapshot, 'sample.js');
+  assert.notEqual(fs.statSync(copy).ino, fs.statSync(path.join(source, 'sample.js')).ino);
   const digest = snapshot.manifest.digest;
-  fs.writeFileSync(path.join(source, 'sample.txt'), 'beta\n');
+  fs.writeFileSync(path.join(source, 'sample.js'), 'beta\n');
   assert.equal(fs.readFileSync(copy, 'utf8'), 'alpha\n');
   assert.equal(snapshot.manifest.digest, digest);
   assert.equal(fs.statSync(copy).mode & 0o222, 0);
@@ -99,7 +99,7 @@ test('failed owned snapshot deletion can be retried safely', (t) => {
 test('fixed trusted bundles capture only selected immutable UTF-8 bytes', (t) => {
   const source = fixture(t);
   fs.writeFileSync(path.join(source, 'runtime.mjs'), '// inert trusted fixture\n');
-  fs.writeFileSync(path.join(source, 'invalid.txt'), Buffer.from([0xff]));
+  fs.writeFileSync(path.join(source, 'invalid.json'), Buffer.from([0xff]));
   const snapshot = createSnapshot(source, { only: ['runtime.mjs'] });
   t.after(() => disposeSnapshot(snapshot));
   fs.writeFileSync(path.join(source, 'runtime.mjs'), '// changed live fixture\n');
@@ -107,7 +107,7 @@ test('fixed trusted bundles capture only selected immutable UTF-8 bytes', (t) =>
   assert.equal(fs.readFileSync(path.join(snapshot.snapshot, 'runtime.mjs'), 'utf8'), '// inert trusted fixture\n');
   const full = createSnapshot(source);
   t.after(() => disposeSnapshot(full));
-  assert.equal(full.manifest.omissions.find((f) => f.path === 'invalid.txt').reason, 'non_utf8_text');
+  assert.equal(full.manifest.omissions.find((f) => f.path === 'invalid.json').reason, 'non_utf8_text');
 });
 
 test('cross-check collection uses the downstream evidence schema', (t) => {
@@ -117,8 +117,8 @@ test('cross-check collection uses the downstream evidence schema', (t) => {
   const out = path.join(source, 'out');
   fs.mkdirSync(out);
   const job = jobFor(snapshot, { phase: 'crosscheck', claims: [{ id: 'grok-s1-auth#0' }] });
-  for (const extra of [{ reason: 'x'.repeat(20_001) }, { evidence: Array(101).fill('sample.txt:1') }, { severity: ['low'] }]) {
-    fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify([{ id: 'grok-s1-auth#0', verdict: 'partial', reason: 'Inert fixture.', evidence: ['sample.txt:1'], ...extra }]));
+  for (const extra of [{ reason: 'x'.repeat(20_001) }, { evidence: Array(101).fill('sample.js:1') }, { severity: ['low'] }]) {
+    fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify([{ id: 'grok-s1-auth#0', verdict: 'partial', reason: 'Inert fixture.', evidence: ['sample.js:1'], ...extra }]));
     assert.throws(() => validateOutput(job, out));
   }
   fs.writeFileSync(path.join(out, 'report.json'), Buffer.from([0xff]));
@@ -133,7 +133,7 @@ test('jobs have independent identities and copied, digested cross-check assignme
   const second = jobFor(snapshot);
   assert.notEqual(first.id, second.id);
   assert.deepEqual(first.expected, ['report.json', 'report.md']);
-  const claims = [{ id: 'grok-s1-auth#0', title: 'Inert claim', location: ['sample.txt:1'] }];
+  const claims = [{ id: 'grok-s1-auth#0', title: 'Inert claim', location: ['sample.js:1'] }];
   const cross = jobFor(snapshot, { phase: 'crosscheck', claims });
   claims[0].title = 'Changed after input capture';
   assert.equal(cross.claims[0].title, 'Inert claim');
@@ -164,7 +164,7 @@ test('private collection rejects unexpected files, links and incomplete assignme
   assert.throws(() => validateOutput(job, out));
   fs.unlinkSync(path.join(out, 'extra.txt'));
   fs.unlinkSync(path.join(out, 'report.md'));
-  fs.symlinkSync(path.join(source, 'sample.txt'), path.join(out, 'report.md'));
+  fs.symlinkSync(path.join(source, 'sample.js'), path.join(out, 'report.md'));
   assert.throws(() => validateOutput(job, out));
   fs.unlinkSync(path.join(out, 'report.md'));
   const cross = jobFor(snapshot, { phase: 'crosscheck', claims: [{ id: 'grok-s1-auth#0' }] });
