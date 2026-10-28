@@ -271,6 +271,37 @@ async function npmInstall(rels) {
   put('npm-install', worst, bits.join('; '));
 }
 
+// Review mode: fetch lockfile-pinned packages only, like the wheel-only Python
+// preparer. --ignore-scripts keeps install hooks and target code from running;
+// existing tests use node_modules after the network is disconnected.
+async function npmFetch(rels) {
+  const bits = [];
+  let worst = 'ran';
+  for (const rel of rels) {
+    const cwd = dirOf(path.posix.dirname(rel));
+    if (!cwd) { worst = 'failed'; bits.push(`${rel} path refused`); continue; }
+    if (timeLeft() < 60_000) { worst = 'impossible'; bits.push(`${rel} time limit`); continue; }
+    // Project .npmrc files are not captured, and lockfiles drift from package.json.
+    // Fall back to legacy peer resolution, then to an install that keeps locked
+    // versions and resolves only missing entries; the mode used is disclosed.
+    let res, mode, args;
+    for ([mode, ...args] of [
+      ['ci', 'ci'],
+      ['ci with legacy peer deps', 'ci', '--legacy-peer-deps'],
+      ['install (lockfile out of sync; missing entries resolved from the registry)', 'install', '--no-save'],
+      ['install with legacy peer deps (lockfile out of sync; missing entries resolved from the registry)', 'install', '--no-save', '--legacy-peer-deps'],
+    ]) {
+      if (timeLeft() < 60_000) break;
+      res = await run('npm', [...args, '--ignore-scripts', '--no-audit', '--no-fund', '--cache', '/work/npm-cache'], { cwd, timeoutMs: Math.min(10 * 60 * 1000, timeLeft()), env: { npm_config_ignore_scripts: 'true' } });
+      log('npm-install', res);
+      if (res.code === 0) break;
+    }
+    if (res?.code !== 0) worst = 'failed';
+    bits.push(res ? `${rel} ${res.code === 0 ? mode : brief(res)}` : `${rel} time limit`);
+  }
+  put('npm-install', worst, `Lockfile-only fetch, install scripts disabled: ${bits.join('; ')}`);
+}
+
 async function pnpmInstall(rels) {
   const bits = [];
   let worst = 'ran';
@@ -543,6 +574,8 @@ async function main() {
     ['osv-lock', () => osv(false)],
     ['osv-call', () => osv(true)],
   ];
+  const fetchNode = reviewOnly && process.env.SANDBOX_FAST !== '1' && tree.npmLocks.items.length > 0;
+  if (fetchNode) want.delete('npm-install');
   if (reviewOnly) {
     for (const id of want) put(id, 'impossible', 'Source security review: target builds, install hooks, active scans and tests are disabled during networked preparation. Existing tests may run through the fixed MCP catalog after network disconnection.');
   } else if (process.env.SANDBOX_FAST !== '1') {
@@ -575,6 +608,10 @@ async function main() {
         }
       } catch { put('static-scanners', 'failed', 'Structured scanner evidence was not produced. See harness.log.'); }
     }
+  }
+  // After the scanners, so gitleaks, semgrep and osv-scanner never see node_modules.
+  if (fetchNode) {
+    try { await npmFetch(tree.npmLocks.items); } catch (err) { put('npm-install', 'failed', err.message || String(err)); }
   }
   save();
   publish('checks.done', { ready: true, timestamp: new Date().toISOString() });

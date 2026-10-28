@@ -11,7 +11,7 @@ export const LIMITS = Object.freeze({ fileBytes: 2 * 1024 * 1024, totalBytes: 12
 const SLUGS = ['auth', 'input', 'logic', 'config', 'deps', 'client'];
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'target', 'dist', 'build', '.next', 'coverage', '__pycache__', '.cargo', '.ssh', '.aws', '.docker', '.kube', '.grok', '.codex', '.gemini', '.agy', 'secrets']);
 const SKIP_PATHS = new Set(['audit/reports', 'audit/pocs', 'audit/theme-previews', 'docs/reviews']);
-const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.json', '.yaml', '.yml', '.toml', '.rs', '.go', '.py', '.rb', '.php', '.java', '.kt', '.cs', '.c', '.h', '.cpp', '.hpp', '.sql', '.html', '.css', '.md', '.sh', '.txt', '.lock', '.prisma', '.proto', '.xml', '.properties', '.gradle', '.scala', '.swift', '.vue', '.svelte', '.graphql', '.ini', '.cfg']);
+const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.json', '.yaml', '.yml', '.toml', '.rs', '.go', '.py', '.rb', '.php', '.java', '.kt', '.cs', '.c', '.h', '.cpp', '.hpp', '.sql', '.html', '.css', '.md', '.sh', '.txt', '.lock', '.prisma', '.proto', '.xml', '.properties', '.gradle', '.scala', '.swift', '.vue', '.svelte', '.graphql', '.ini', '.cfg', '.tf', '.tfvars', '.hcl', '.lua']);
 const OWNED = new Map();
 const CAPTURES = new WeakMap();
 export const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');

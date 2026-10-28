@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { scannerEvidence, testCounts } from './scanner-evidence.mjs';
+import { dominantTestFailure, scannerEvidence, testCounts } from './scanner-evidence.mjs';
 
 test('scanner failures, error envelopes and malformed output cannot become clean scans', () => {
   for (const code of [127, 124, 2]) assert.equal(scannerEvidence('osv-scanner', { code, stdout: '{"results":[]}' }).state, 'failed');
@@ -22,6 +22,16 @@ test('execution summaries distinguish nonzero tests, failures, skips and absent 
   assert.deepEqual(testCounts('# pass 3\n# fail 1\n# skipped 2\n# todo 1\n'), { passed: 3, failed: 1, skipped: 3 });
   assert.deepEqual(testCounts('...\n== 3 failed, 120 passed, 2 skipped, 1 error in 4.21s =='), { passed: 120, failed: 4, skipped: 2 });
   assert.deepEqual(testCounts('........\n8 passed in 0.31s'), { passed: 8, failed: 0, skipped: 0 });
+  assert.deepEqual(testCounts('231 failed, 8930 passed, 667 skipped, 7752 warnings, 415 errors, 26 subtests passed in 752.20s (0:12:32)'), { passed: 8930, failed: 646, skipped: 667 });
   assert.equal(testCounts('command completed successfully'), null);
   assert.deepEqual(testCounts('test result: ok. 0 passed; 0 failed; 0 ignored'), { passed: 0, failed: 0, skipped: 0 });
+});
+
+test('a shared pytest failure line names the dominant cause', () => {
+  const stdout = '_ ERROR at setup of test_a _\nE   Failed: Real PostgreSQL verification requires PG_BINDIR server binaries\n_ ERROR at setup of test_b _\nE   Failed: Real PostgreSQL verification requires PG_BINDIR server binaries\nE   AssertionError: one-off\n';
+  assert.deepEqual(dominantTestFailure(stdout), { message: 'Failed: Real PostgreSQL verification requires PG_BINDIR server binaries', count: 2 });
+  assert.equal(dominantTestFailure('E   AssertionError: one-off\n'), null);
+  assert.equal(dominantTestFailure('8 passed in 0.31s'), null);
+  const summary = 'E   noise\nE   noise\nE   noise\nERROR tests/a.py::t1 - AssertionError: Real Redis is required\nERROR tests/a.py::t2 - AssertionError: Real Redis is required\nFAILED tests/b.py::t3 - assert False\n';
+  assert.deepEqual(dominantTestFailure(summary), { message: 'AssertionError: Real Redis is required', count: 2 });
 });

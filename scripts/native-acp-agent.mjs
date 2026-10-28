@@ -81,6 +81,10 @@ export class NativeAcpAgent {
       let invalid = false;
       let resultStatus = 'missing';
       let parseFailure = null;
+      // Bounded enum counters only; provider text goes to the adapter log, not the saved state.
+      const stepStates = {}, otherEvents = {};
+      let resultKeys = [];
+      const tally = (counter, name) => { const key = /^[A-Za-z0-9_]{1,64}$/.test(name || '') ? name : 'other'; if (key in counter || Object.keys(counter).length < 32) counter[key] = (counter[key] || 0) + 1; };
       const decoder = new StringDecoder('utf8');
       const fail = () => { invalid = true; this.stop('SIGTERM'); };
       child.stdin.on('error', () => {});
@@ -96,14 +100,19 @@ export class NativeAcpAgent {
           }
           if (value.event === 'step_update') {
             const step = value.step_update;
+            tally(stepStates, step?.state);
             if (step?.tool_name) this.update({ sessionUpdate: 'tool_call_update', toolCallId: String(step.step_index), title: step.tool_name, status: step.state === 'STEP_STATE_DONE' ? 'completed' : 'in_progress' });
             else this.update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: '' } });
           }
+          if (!['init', 'step_update', 'result'].includes(value.event)) tally(otherEvents, typeof value.event === 'string' ? value.event : 'missing');
           if (value.event === 'result') {
             if (resultSeen) { parseFailure = 'duplicate_result'; throw new Error(); }
             resultSeen = true;
             successful = value.result?.status === 'SUCCESS';
             resultStatus = successful ? 'success' : value.result?.status === 'ERROR' ? 'error' : 'unrecognized';
+            resultKeys = Object.keys(value.result || {}).filter(key => /^[A-Za-z0-9_]{1,64}$/.test(key)).slice(0, 32).sort();
+            // A non-success result is otherwise unexplained: keep its fields (not the reply) in the log.
+            if (!successful) { const { response, ...detail } = value.result || {}; process.stderr.write(`agy result ${JSON.stringify(detail).slice(0, 8192)}\n`); }
             if (typeof value.result?.response === 'string') this.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: value.result.response } });
           }
         } catch { parseFailure ||= 'invalid_frame'; fail(); }
@@ -126,7 +135,7 @@ export class NativeAcpAgent {
         this.active = null;
         this.stop('SIGKILL');
         this.state.turns++;
-        this.state.lastTurn = { exitCode: code, signal, resultStatus, resultSeen, parseFailure, sessionBound: UUID.test(this.state.nativeId || '') };
+        this.state.lastTurn = { exitCode: code, signal, resultStatus, resultSeen, parseFailure, sessionBound: UUID.test(this.state.nativeId || ''), resultKeys, stepStates, otherEvents };
         this.save();
         if (this.cancelled) resolve({ stopReason: 'cancelled' });
         else if (invalid || code !== 0 || !successful || !resultSeen || !UUID.test(this.state.nativeId || '')) reject(new SessionError('native_turn_failed'));

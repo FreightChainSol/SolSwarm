@@ -10,7 +10,7 @@ function fixture(t, mode = 'success') {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-agy-acp-'));
   t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
   const cli = path.join(cwd, 'agy-fixture');
-  fs.writeFileSync(cli, `#!${process.execPath}\nimport fs from 'node:fs';\nfs.appendFileSync('invocations.jsonl',JSON.stringify(process.argv.slice(2))+'\\n');\nconst emit = value=>process.stdout.write(JSON.stringify(value)+'\\n');\nemit({event:'init',conversation_id:${JSON.stringify(mode === 'wrong-session' ? 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' : nativeId)}});\n${mode === 'silent' ? 'setInterval(()=>{},1000);' : `const result={event:'result',result:{status:${JSON.stringify(mode === 'provider-error' ? 'ERROR' : 'SUCCESS')},response:'Inert acknowledgement'}};${mode === 'unterminated' ? 'process.stdout.write(JSON.stringify(result));' : mode === 'truncated' ? 'process.stdout.write(JSON.stringify(result).slice(0,-1));' : mode === 'duplicate' ? 'emit(result);emit(result);' : 'emit(result);'}process.exitCode=${mode === 'exit-error' ? 7 : 0};`}\n`, { mode: 0o700 });
+  fs.writeFileSync(cli, `#!${process.execPath}\nimport fs from 'node:fs';\nfs.appendFileSync('invocations.jsonl',JSON.stringify(process.argv.slice(2))+'\\n');\nconst emit = value=>process.stdout.write(JSON.stringify(value)+'\\n');\nemit({event:'init',conversation_id:${JSON.stringify(mode === 'wrong-session' ? 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' : nativeId)}});\n${mode === 'provider-error' ? "emit({event:'step_update',step_update:{step_index:1,tool_name:'call_mcp_tool',state:'STEP_STATE_ERROR'}});emit({event:'usage',tokens:1});\n" : ''}${mode === 'silent' ? 'setInterval(()=>{},1000);' : `const result={event:'result',result:{status:${JSON.stringify(mode === 'provider-error' ? 'ERROR' : 'SUCCESS')},response:'Inert acknowledgement'}};${mode === 'unterminated' ? 'process.stdout.write(JSON.stringify(result));' : mode === 'truncated' ? 'process.stdout.write(JSON.stringify(result).slice(0,-1));' : mode === 'duplicate' ? 'emit(result);emit(result);' : 'emit(result);'}process.exitCode=${mode === 'exit-error' ? 7 : 0};`}\n`, { mode: 0o700 });
   // The extensionless fixture is ESM through a private package marker.
   fs.writeFileSync(path.join(cwd, 'package.json'), '{"type":"module"}');
   const mcpServers = [{ name: 'audit_docker', command: process.execPath, args: ['/inert/bridge.mjs'] }];
@@ -61,7 +61,7 @@ test('AGY accepts a complete final frame without a newline and retains completio
   const { sessionId } = await f.agent.request('session/new', f.setup);
   assert.deepEqual(await f.agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'inert' }] }), { stopReason: 'end_turn' });
   const state = JSON.parse(fs.readFileSync(path.join(f.cwd, 'native-session.json')));
-  assert.deepEqual(state.lastTurn, { exitCode: 0, signal: null, resultStatus: 'success', resultSeen: true, parseFailure: null, sessionBound: true });
+  assert.deepEqual(state.lastTurn, { exitCode: 0, signal: null, resultStatus: 'success', resultSeen: true, parseFailure: null, sessionBound: true, resultKeys: ['response', 'status'], stepStates: {}, otherEvents: {} });
 });
 
 test('AGY truncated or duplicate completion frames remain failures with bounded diagnostic enums', async t => {
@@ -73,5 +73,10 @@ test('AGY truncated or duplicate completion frames remain failures with bounded 
     assert.equal(state.lastTurn.parseFailure, mode === 'truncated' ? 'invalid_frame' : mode === 'duplicate' ? 'duplicate_result' : null);
     assert.equal(state.lastTurn.exitCode === 7, mode === 'exit-error');
     assert.ok(!JSON.stringify(state.lastTurn).includes('Inert acknowledgement'));
+    if (mode === 'provider-error') {
+      assert.deepEqual(state.lastTurn.stepStates, { STEP_STATE_ERROR: 1 });
+      assert.deepEqual(state.lastTurn.otherEvents, { usage: 1 });
+      assert.deepEqual(state.lastTurn.resultKeys, ['response', 'status']);
+    }
   }
 });

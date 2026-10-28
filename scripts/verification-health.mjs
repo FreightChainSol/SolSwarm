@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { scannerEvidence, testCounts, missingTestArtifact } from './scanner-evidence.mjs';
+import { scannerEvidence, testCounts, missingTestArtifact, dominantTestFailure } from './scanner-evidence.mjs';
 
 // Review output validation and executed coverage are different gates.
 export function verificationHealth(root, read) {
@@ -34,7 +34,14 @@ export function verificationHealth(root, read) {
         const counts = testCounts(evidence.stdout);
         if (hash !== row.evidenceHash) throw Error();
         if (row.exitCode !== 0) { const detail = missingTestArtifact(evidence.stderr); if (detail) details.add(detail); }
-        if (!(row.exitCode === 0 && counts?.passed > 0 && counts.failed === 0 && counts.skipped === 0)) passed = false;
+        // Aggregated per-crate summaries can sit in the omitted middle of an oversized output.
+        if (evidence.omittedBytes) details.add(`Output exceeded the capture limit (${evidence.omittedBytes} bytes omitted).`);
+        if (!(row.exitCode === 0 && counts?.passed > 0 && counts.failed === 0 && counts.skipped === 0 && !evidence.omittedBytes)) {
+          passed = false;
+          details.add(`Exit ${row.exitCode}; ${counts ? `${counts.passed} passed, ${counts.failed} failed or errored, ${counts.skipped} skipped` : 'no test summary in the output'}.`);
+          const cause = dominantTestFailure(evidence.stdout);
+          if (cause) details.add(`Most common failure (${cause.count}x): ${cause.message}`);
+        }
       } catch { passed = false; gaps.push(`Missing or altered test output for ${entry.id}.`); }
     }
     suites.push({ id: entry.id, state: passed ? 'passed' : rows.length ? 'failed_or_unverified' : 'not_run', attempts: rows.length });

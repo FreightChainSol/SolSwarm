@@ -114,5 +114,5 @@ test('a Python project with tests gets a fixed, hash-bound pytest entry and no c
   const selected = selectExistingTest({ ...catalog, tests: [{ ...rows[0], command: 'sh', args: ['-c', 'x'] }] }, rows[0].id, catalog.sourceDigest);
   assert.equal(selected.command, '/work/venv/bin/python');
   assert.deepEqual(selected.args, ['-m', 'pytest', '-p', 'no:cacheprovider', '-q', '--tb=line']);
-  assert.equal(selected.timeoutMs, 900000);
+  assert.equal(selected.timeoutMs, 1800000);
 });

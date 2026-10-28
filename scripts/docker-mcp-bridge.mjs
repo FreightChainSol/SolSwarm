@@ -147,7 +147,53 @@ function resolveContainerPath(inputPath, defaultRoot = '/work/src') {
   return resolved;
 }
 
-export function execInContainer(dockerBin, container, args, { cwd = '/work/src', timeoutMs = 30_000, input = '' } = {}) {
+// With keepTail, an oversized stream keeps its first quarter and last three
+// quarters: test runners print their summary last, so a head-only cap loses the counts.
+export function boundedCapture(maxBytes, keepTail = false) {
+  const headMax = keepTail ? Math.floor(maxBytes / 4) : maxBytes, tailMax = maxBytes - headMax;
+  let head = Buffer.alloc(0), tail = Buffer.alloc(0), omitted = 0;
+  return {
+    push(chunk) {
+      if (head.length < headMax) {
+        const take = Math.min(headMax - head.length, chunk.length);
+        head = Buffer.concat([head, chunk.subarray(0, take)]);
+        chunk = chunk.subarray(take);
+      }
+      if (!chunk.length) return;
+      if (!tailMax) { omitted += chunk.length; return; }
+      tail = Buffer.concat([tail, chunk]);
+      if (tail.length > tailMax) { omitted += tail.length - tailMax; tail = tail.subarray(tail.length - tailMax); }
+    },
+    get omitted() { return omitted; },
+    text() { return head.toString('utf8') + (omitted && tailMax ? `\n[... ${omitted} bytes omitted ...]\n` : '') + tail.toString('utf8'); },
+  };
+}
+
+const TEST_OUTPUT_BYTES = 2 * 1024 * 1024;
+const TEST_RESPONSE_CHARS = 48 * 1024;
+
+function clipForModel(text) {
+  if (!text || text.length <= TEST_RESPONSE_CHARS) return text || '(empty)';
+  const head = Math.floor(TEST_RESPONSE_CHARS / 4);
+  return `${text.slice(0, head)}\n[... ${text.length - TEST_RESPONSE_CHARS} characters omitted; full output is retained as evidence ...]\n${text.slice(text.length - (TEST_RESPONSE_CHARS - head))}`;
+}
+
+function existingTestResponse(id, code, failureDetail, output, provenance) {
+  return `Existing test ${id}; exit code: ${code}${provenance ? ` (${provenance})` : ''}${failureDetail ? `\n${failureDetail}` : ''}\nSTDOUT:\n${clipForModel(output.stdout)}\nSTDERR:\n${clipForModel(output.stderr)}`;
+}
+
+// Only a hash-matched coordinator run for the same suite and source is reused.
+function recordedVerificationRun(reportDir, testId, sourceDigest) {
+  try {
+    const row = readReportJson(reportDir, 'harness/existing-test-results-verification.json').findLast(item => item?.testId === testId && item.sourceDigest === sourceDigest);
+    if (!row || !Number.isSafeInteger(row.exitCode) || !/^harness\/existing-test-output-verification-\d+\.json$/.test(row.evidenceFile)) return null;
+    const evidence = readReportJson(reportDir, row.evidenceFile, 40 * 1024 * 1024);
+    if (crypto.createHash('sha256').update(JSON.stringify(evidence)).digest('hex') !== row.evidenceHash || typeof evidence.stdout !== 'string' || typeof evidence.stderr !== 'string') return null;
+    return { row, evidence };
+  } catch { return null; }
+}
+
+export function execInContainer(dockerBin, container, args, { cwd = '/work/src', timeoutMs = 30_000, input = '', maxBytes = 64 * 1024, keepTail = false } = {}) {
   return new Promise((resolve) => {
     const dockerArgs = [
       'exec', '-i', '--user', '10001:10001', '-w', cwd,
@@ -156,14 +202,14 @@ export function execInContainer(dockerBin, container, args, { cwd = '/work/src',
       container, ...args,
     ];
     const child = spawn(dockerBin, dockerArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    const maxBytes = 64 * 1024;
-    const timer = setTimeout(() => { child.kill('SIGKILL'); }, Math.min(Math.max(1000, timeoutMs), 910_000));
-    child.stdout.on('data', (c) => { if (stdout.length < maxBytes) stdout += c.toString('utf8').slice(0, maxBytes - stdout.length); });
-    child.stderr.on('data', (c) => { if (stderr.length < maxBytes) stderr += c.toString('utf8').slice(0, maxBytes - stderr.length); });
-    child.on('error', (err) => { clearTimeout(timer); resolve({ code: 127, stdout, stderr: err.message }); });
-    child.on('close', (code, sig) => { clearTimeout(timer); resolve({ code: sig === 'SIGKILL' ? 124 : (code ?? 1), stdout, stderr }); });
+    const stdout = boundedCapture(maxBytes, keepTail);
+    const stderr = boundedCapture(maxBytes, keepTail);
+    const done = (code, stderrText = stderr.text()) => resolve({ code, stdout: stdout.text(), stderr: stderrText, omittedBytes: stdout.omitted + stderr.omitted });
+    const timer = setTimeout(() => { child.kill('SIGKILL'); }, Math.min(Math.max(1000, timeoutMs), 1_810_000));
+    child.stdout.on('data', (c) => stdout.push(c));
+    child.stderr.on('data', (c) => stderr.push(c));
+    child.on('error', (err) => { clearTimeout(timer); done(127, err.message); });
+    child.on('close', (code, sig) => { clearTimeout(timer); done(sig === 'SIGKILL' ? 124 : (code ?? 1)); });
     child.stdin.on('error', () => {});
     child.stdin.end(input);
   });
@@ -446,14 +492,21 @@ export async function callBridgeTool(ctx, name, args = {}) {
     if (name === 'list_existing_tests') return JSON.stringify({ scope: 'existing_offline_tests_only', tests: entries.map(({ id, kind, cwd, description }) => ({ id, kind, cwd, description })) });
     const entry = selectExistingTest(catalog, args.test_id, sourceDigest);
     if (fs.existsSync(path.join(reportDir, 'harness/test-artifacts.json'))) entry.artifacts = selectTestArtifacts(readReportJson(reportDir, 'harness/test-artifacts.json'), catalog.sourceDigest);
+    const key = ctx.submissionIdentity?.name || auditor || agent;
+    // The coordinator runs every catalogued suite before reviewers start. Reviewers get
+    // that recorded run instead of a rerun of the same source: a long suite outlives
+    // some CLIs' MCP call deadlines and holds the shared test lock against other reviewers.
+    if (key !== 'verification') {
+      const recorded = recordedVerificationRun(reportDir, entry.id, catalog.sourceDigest);
+      if (recorded) return existingTestResponse(entry.id, recorded.row.exitCode, recorded.row.failureDetail, recorded.evidence, `recorded by the coordinator at ${recorded.row.at} before review; not re-executed`);
+    }
     return withExistingTestLock(reportDir, async () => {
       const inspected = spawnSync(dockerBin, ['inspect', '--format', '{"running":{{json .State.Running}},"mode":{{json .HostConfig.NetworkMode}},"networks":{{json .NetworkSettings.Networks}}}', container], { encoding: 'utf8', timeout: 8000, maxBuffer: 64 * 1024 });
       let network;
       try { network = JSON.parse(inspected.stdout); } catch { throw new Error('Cannot verify offline test containment'); }
       if (inspected.status !== 0 || network.running !== true || typeof network.mode !== 'string' || network.mode === 'host' || network.mode.startsWith('container:') || !network.networks || Object.keys(network.networks).some(key => key !== 'none')) throw new Error('Tests require a network-disconnected container');
-      const result = await execInContainer(dockerBin, container, ['node', '-e', EXISTING_TEST_RUNNER], { input: JSON.stringify(entry), timeoutMs: entry.timeoutMs + 10_000 });
+      const result = await execInContainer(dockerBin, container, ['node', '-e', EXISTING_TEST_RUNNER], { input: JSON.stringify(entry), timeoutMs: entry.timeoutMs + 10_000, maxBytes: TEST_OUTPUT_BYTES, keepTail: true });
       const failureDetail = result.code !== 0 ? missingTestArtifact(result.stderr) : null;
-      const key = ctx.submissionIdentity?.name || auditor || agent;
       if (key) {
         const file = `harness/existing-test-results-${key}.json`;
         let prior = []; try { prior = readReportJson(reportDir, file); } catch { /* first test */ }
@@ -461,11 +514,11 @@ export async function callBridgeTool(ctx, name, args = {}) {
         const sequence = Math.max(-1, ...prior.map(row => Number(row.evidenceFile?.match(/-(\d+)\.json$/)?.[1] ?? -1))) + 1;
         if (!Number.isSafeInteger(sequence)) throw new Error('Invalid existing test evidence sequence');
         const evidenceFile = `harness/existing-test-output-${key}-${sequence}.json`;
-        const evidence = JSON.stringify({ stdout: result.stdout, stderr: result.stderr });
+        const evidence = JSON.stringify({ stdout: result.stdout, stderr: result.stderr, ...(result.omittedBytes ? { omittedBytes: result.omittedBytes } : {}) });
         writeReportFile(reportDir, evidenceFile, evidence);
         writeReportFile(reportDir, file, JSON.stringify([...prior, { testId: entry.id, sourceDigest: catalog.sourceDigest, kind: entry.kind, cwd: entry.cwd, exitCode: result.code, counts, ...(failureDetail ? { failureDetail } : {}), evidenceFile, evidenceHash: crypto.createHash('sha256').update(evidence).digest('hex'), at: new Date().toISOString(), scope: 'existing_offline_test_only' }].slice(-200)));
       }
-      return `Existing test ${entry.id}; exit code: ${result.code}${failureDetail ? `\n${failureDetail}` : ''}\nSTDOUT:\n${result.stdout || '(empty)'}\nSTDERR:\n${result.stderr || '(empty)'}`;
+      return existingTestResponse(entry.id, result.code, failureDetail, result);
     });
   }
 

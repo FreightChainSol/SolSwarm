@@ -202,7 +202,7 @@ Options (run, pocs):
   --workdir <dir>          --github only: clone base directory (default: $AUDIT_TMP or /tmp/audit-targets)
   --clean                  --github only: delete the clone when the run ends (default: keep it)
 Options (run):
-  --test-artifacts <dir>   Import deploy/*.so from a prebuilt Cargo target directory; hashes are recorded, source equivalence remains unverified
+  --test-artifacts <dir>   Import deploy/*.so and Anchor idl/*.json from a prebuilt Cargo target directory; hashes are recorded, source equivalence remains unverified
   --restart-failed         With --resume-from, review failed assignments in new sessions; provider refusals, quotas and login errors remain blocked
   -s, --surface <id>       s1..s6 or all (default: all)
   -o, --out <dir>          report directory (default: reports/<timestamp>-<repo>)

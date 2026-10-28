@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import crypto from 'node:crypto';
 import {
+  boundedCapture,
   callBridgeTool,
   handleRpcMessage,
   normalizeCitation,
@@ -20,7 +22,8 @@ import {
 import { buildAuditorPrompt, runOrchestratedAudit } from './docker-agent-orchestrator.mjs';
 import { buildSessionLaunch } from './agent-session-launch.mjs';
 import { buildCliInvocation } from './agent-launch.mjs';
-import { readReportJson, validateAuditor, validCrosscheckRow } from './report-contract.mjs';
+import { readReportJson, validateAuditor, validCrosscheckRow, writeReportFile } from './report-contract.mjs';
+import { REVIEW_WORKFLOW } from './review-workflow.mjs';
 
 test('normalizeCitation strips container prefixes and ensures file:line format', () => {
   assert.equal(normalizeCitation('/work/src/programs/escrow/src/lib.rs:42-48'), 'programs/escrow/src/lib.rs:42');
@@ -116,6 +119,44 @@ test('reviews have no deadline and only explicit finalization restricts inspecti
   assert.equal(closed.result.isError, true, 'an explicit submission-only recovery retains its scope');
   const submitted = await handleRpcMessage(ctx, { id: 3, method: 'tools/call', params: { name: 'submit_audit_report', arguments: { findings: [], verified_safe: [], markdown_summary: '# Finalization fixture\nNo security review performed.' } } });
   assert.equal(submitted.result.isError, false);
+});
+
+test('bounded capture keeps a runner summary past the limit only when asked to', () => {
+  const feed = capture => { capture.push(Buffer.from('header\n')); capture.push(Buffer.from('.'.repeat(5000))); capture.push(Buffer.from('\n12 failed, 900 passed in 3.10s\n')); return capture; };
+  const tail = feed(boundedCapture(1024, true));
+  assert.match(tail.text(), /^header\n/);
+  assert.match(tail.text(), /bytes omitted/);
+  assert.match(tail.text(), /12 failed, 900 passed in 3\.10s\n$/);
+  assert.ok(tail.omitted > 0);
+  const head = feed(boundedCapture(1024));
+  assert.equal(head.text().length, 1024);
+  assert.doesNotMatch(head.text(), /passed|omitted/);
+});
+
+test('reviewers receive the hash-matched coordinator test run instead of re-executing a suite', async (t) => {
+  const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-test-reuse-'));
+  t.after(() => fs.rmSync(reportDir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(reportDir, 'harness'));
+  const sourceDigest = 'a'.repeat(64);
+  const id = `test-${crypto.createHash('sha256').update(`${sourceDigest}:pytest:backend`).digest('hex').slice(0, 24)}`;
+  writeReportFile(reportDir, 'harness/existing-tests.json', JSON.stringify({ version: 1, workflow: REVIEW_WORKFLOW, sourceDigest, tests: [{ id, kind: 'pytest', cwd: 'backend', files: [{ path: 'backend/requirements.txt', sha256: 'b'.repeat(64) }], description: 'pytest existing tests in backend' }] }));
+  const evidence = JSON.stringify({ stdout: 'E   Failed: needs a database\n1 failed, 3 passed in 1.00s\n', stderr: '' });
+  writeReportFile(reportDir, 'harness/existing-test-output-verification-0.json', evidence);
+  const row = { testId: id, sourceDigest, kind: 'pytest', cwd: 'backend', exitCode: 1, counts: null, evidenceFile: 'harness/existing-test-output-verification-0.json', evidenceHash: crypto.createHash('sha256').update(evidence).digest('hex'), at: '2026-10-27T22:52:58.966Z', scope: 'existing_offline_test_only' };
+  writeReportFile(reportDir, 'harness/existing-test-results-verification.json', JSON.stringify([row]));
+  // A docker binary that always fails proves no container command ran.
+  const ctx = { dockerBin: '/usr/bin/false', container: 'absent', reportDir, role: 'auditor', auditor: 'agy-s3-logic', agent: 'agy', surface: 'S3' };
+  const call = () => handleRpcMessage(ctx, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'run_existing_tests', arguments: { test_id: id } } });
+  const reused = await call();
+  assert.equal(reused.result.isError, false);
+  assert.match(reused.result.content[0].text, /exit code: 1 \(recorded by the coordinator at 2026-10-27T22:52:58\.966Z before review; not re-executed\)/);
+  assert.match(reused.result.content[0].text, /1 failed, 3 passed/);
+  assert.equal(fs.existsSync(path.join(reportDir, 'harness/existing-test-results-agy-s3-logic.json')), false);
+  // Altered evidence is not reused; the bridge falls back to a real (here: unavailable) run.
+  fs.writeFileSync(path.join(reportDir, 'harness/existing-test-output-verification-0.json'), JSON.stringify({ stdout: '4 passed in 1.00s\n', stderr: '' }));
+  const refused = await call();
+  assert.equal(refused.result.isError, true);
+  assert.doesNotMatch(refused.result.content[0].text, /not re-executed/);
 });
 
 test('MCP JSON-RPC handler supports initialize, tools/list, get_review_plan, and submit tools', async (t) => {
@@ -504,7 +545,9 @@ process.exitCode=result.stageFailures.length||html.status!==0?2:0;
   assert.equal(fs.existsSync(path.join(outDir, 'harness', 'stack-profile.json')), true);
   assert.match(fs.readFileSync(path.join(outDir, 'harness', 'review-plans.md'), 'utf8'), /Cryptography, Web3 Signatures & On-Chain Custody/);
   assert.equal(fs.existsSync(path.join(outDir, 'pocs', 'claude-s1-auth')), false);
-  assert.equal(readReportJson(outDir, 'harness/existing-test-results-claude-s1-auth.json')[0].exitCode, 0);
+  // The reviewer's call reused the coordinator's run of the same suite instead of executing it again.
+  assert.equal(readReportJson(outDir, 'harness/existing-test-results-verification.json').find(row => row.kind === 'npm').exitCode, 0);
+  assert.equal(fs.existsSync(path.join(outDir, 'harness/existing-test-results-claude-s1-auth.json')), false);
   assert.match(fs.readFileSync(path.join(outDir, 'report.html'), 'utf8'), /INCOMPLETE VERIFICATION/);
 
   const resumedOut = path.join(root, 'resumed-report');

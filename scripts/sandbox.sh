@@ -316,7 +316,7 @@ if ! docker run -d --name "$SBX" \
   --memory "$MEMORY" \
   --cpus "$CPUS" \
   --read-only \
-  --tmpfs /tmp:uid=10001,gid=10001,size=1g \
+  --tmpfs /tmp:uid=10001,gid=10001,size=1g,exec \
   --tmpfs /home/sandbox:uid=10001,gid=10001,size=256m \
   -e HOME=/home/sandbox \
   -e NODE_USE_ENV_PROXY=1 \
