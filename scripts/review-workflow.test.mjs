@@ -33,7 +33,7 @@ test('the fixed test catalog binds existing manifests and reconstructs commands 
   const selected = selectExistingTest({ ...f.catalog, tests: [{ ...entry, command: 'sh', args: ['-c', 'unapproved'], timeoutMs: 999999999 }] }, entry.id, f.catalog.sourceDigest);
   assert.equal(selected.command, 'npm');
   assert.deepEqual(selected.args, ['--offline', '--ignore-scripts', 'run', 'test']);
-  assert.equal(selected.timeoutMs, 90000);
+  assert.equal(selected.timeoutMs, 900000);
   for (const runner of ['cargo', 'shell']) {
     const row = f.catalog.tests.find(test => test.kind === runner);
     assert.equal(selectExistingTest(f.catalog, row.id).timeoutMs, 900000);
