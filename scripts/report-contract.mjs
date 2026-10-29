@@ -201,7 +201,7 @@ export function loadAuditors(root) {
       const md = path.join(root, 'auditors', `${name}.md`);
       const stat = fs.lstatSync(md);
       if (!stat.isFile() || stat.size === 0 || stat.size > MAX_BYTES) throw new Error('missing or invalid markdown output');
-      if (meta.workerExits?.[name] !== 0) errors.push(`${name}: worker exit is missing or nonzero. ${failureDetail(name)}`);
+      if (meta.workerExits?.[name] !== 0) errors.push(`${name}: worker exit is missing or nonzero. ${failureDetail(name)} The committed report passed validation, so its findings are kept; rerun with --resume-from <this report> to get a clean turn without repeating the audit.`);
       reports.push({ name, data });
     } catch (err) {
       errors.push(`${name}: missing or invalid outputs (${err.code || 'contract validation failed'}). ${failureDetail(name)}`);

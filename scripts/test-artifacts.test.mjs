@@ -67,3 +67,14 @@ test('missing compile-time program fixtures get an actionable prerequisite diagn
   assert.match(missingTestArtifact("error: couldn't read `/work/target/tmp/../deploy/ratpool_escrow.so`: No such file or directory (os error 2)"), /deploy\/ratpool_escrow.so.*--test-artifacts/);
   assert.equal(missingTestArtifact('error: unknown type'), null);
 });
+
+test('setup failures are named instead of reported as a missing test summary', async () => {
+  const { testSetupCause } = await import('./scanner-evidence.mjs');
+  assert.match(testSetupCause('', 'sh: 1: vitest: not found'), /Dependencies are not installed.*vitest.*lockfile/);
+  assert.match(testSetupCause("Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@modelcontextprotocol/sdk' imported", ''), /@modelcontextprotocol\/sdk/);
+  assert.match(testSetupCause('', 'failed to find a workspace root'), /workspace root/);
+  assert.match(testSetupCause('', "error: couldn't read `/work/src/backend/server/test/fixtures/a.json`: No such file or directory"), /backend\/server\/test\/fixtures\/a\.json/);
+  assert.equal(testSetupCause('', "error: couldn't read `/work/target/deploy/x.so`: No such file or directory"), null);
+  assert.match(testSetupCause('', 'run `anchor build` first: Os { code: 2 }'), /--test-artifacts/);
+  assert.equal(testSetupCause('ok', ''), null);
+});

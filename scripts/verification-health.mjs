@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { scannerEvidence, testCounts, missingTestArtifact, dominantTestFailure } from './scanner-evidence.mjs';
+import { scannerEvidence, testCounts, missingTestArtifact, testSetupCause, dominantTestFailure } from './scanner-evidence.mjs';
 
 // Review output validation and executed coverage are different gates.
 export function verificationHealth(root, read) {
@@ -33,7 +33,7 @@ export function verificationHealth(root, read) {
         const hash = crypto.createHash('sha256').update(JSON.stringify(evidence)).digest('hex');
         const counts = testCounts(evidence.stdout);
         if (hash !== row.evidenceHash) throw Error();
-        if (row.exitCode !== 0) { const detail = missingTestArtifact(evidence.stderr); if (detail) details.add(detail); }
+        if (row.exitCode !== 0) { const detail = missingTestArtifact(evidence.stderr) || testSetupCause(evidence.stdout, evidence.stderr); if (detail) details.add(detail); }
         // Aggregated per-crate summaries can sit in the omitted middle of an oversized output.
         if (evidence.omittedBytes) details.add(`Output exceeded the capture limit (${evidence.omittedBytes} bytes omitted).`);
         if (!(row.exitCode === 0 && counts?.passed > 0 && counts.failed === 0 && counts.skipped === 0 && !evidence.omittedBytes)) {

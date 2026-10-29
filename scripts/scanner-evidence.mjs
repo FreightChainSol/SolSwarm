@@ -50,3 +50,16 @@ export function missingTestArtifact(stderr) {
   const name = String(stderr).match(/couldn't read [^\n]*\/deploy\/([A-Za-z0-9_-]+\.so)[^\n]*No such file or directory/)?.[1];
   return name ? `Missing program artifact deploy/${name}; build it separately and supply --test-artifacts <cargo-target-dir>.` : null;
 }
+
+// Name why a suite could not even start, so a gap reads as a setup problem rather than "no test summary".
+export function testSetupCause(stdout, stderr) {
+  const out = `${stderr}\n${stdout}`;
+  const pkg = out.match(/Cannot find package '([^']+)'/)?.[1];
+  const cmd = out.match(/sh: \d+: ([\w.@/-]+): not found/)?.[1];
+  if (pkg || cmd) return `Dependencies are not installed${pkg ? ` (missing package ${pkg})` : ` (${cmd} not found)`}; npm install only runs from a lockfile, so a package.json without one cannot run its tests.`;
+  if (/failed to find a workspace root/.test(out)) return 'Cargo crate inherits from a workspace root that is not in the review snapshot.';
+  if (/run `anchor build` first/.test(out)) return 'Test needs a prebuilt Solana program or IDL ("run `anchor build` first"); build it separately and supply --test-artifacts <cargo-target-dir>.';
+  const input = out.match(/couldn't read `([^`]+)`: No such file or directory/)?.[1];
+  if (input && !/\/deploy\/[\w-]+\.so$/.test(input)) return `Test input missing from the review snapshot: ${input.replace(/^\/work\/src\//, '')}.`;
+  return null;
+}
