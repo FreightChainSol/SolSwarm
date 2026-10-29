@@ -242,6 +242,14 @@ const originalClaims = new Map();
 for (const report of reports) {
   report.data.filter(item => item.title && !item.verified_safe).forEach((item, index) => originalClaims.set(`${report.name}#${index}`, item));
 }
+// Merged clusters show how many auditors agreed and where their severities differed.
+function mergeBadges(f) {
+  const out = [];
+  if ((f.claimIds || []).length > 1) out.push(`<span class="pill" title="Claims merged by shared root cause">${f.claimIds.length} claims · ${f.auditorCount || 1} auditor${f.auditorCount > 1 ? 's' : ''}</span>`);
+  if ((f.severities || []).length > 1) out.push(`<span class="pill orange" title="Auditors rated this issue differently; the highest rating is used">severity ${esc(f.severities.join(' / '))}</span>`);
+  if (f.compound) out.push('<span class="pill orange" title="Title lists several defects; review claim by claim">bundled claim</span>');
+  return out.join('');
+}
 function findingCard(f, index) {
   const originals = (f.claimIds || []).map(id => originalClaims.get(id)).filter(Boolean);
   const primary = originals[0] || f.findings?.[0] || {};
@@ -251,7 +259,7 @@ function findingCard(f, index) {
   const technical = originals.length ? originals : [primary];
   return `<details class="finding ${toneOf(f.severity)}" data-severity="${esc(severityLevel(f.severity))}" data-surface="${esc(String(f.surface).toUpperCase().slice(0, 2))}">
     <summary><span class="finding-index">${String(index + 1).padStart(2, '0')}</span><div>
-      <div class="finding-tags"><span class="pill ${toneOf(f.severity)}">${esc(f.severity)}</span><span class="meta-label">${esc(f.surface)}</span><span class="pill">${esc(status)}</span></div>
+      <div class="finding-tags"><span class="pill ${toneOf(f.severity)}">${esc(f.severity)}</span><span class="meta-label">${esc(f.surface)}</span><span class="pill">${esc(status)}</span>${mergeBadges(f)}</div>
       <h3>${esc(f.title)}</h3><p class="finding-preview">${esc(impact)}</p>
     </div><span class="expand-icon" aria-hidden="true"></span></summary>
     <div class="finding-body">

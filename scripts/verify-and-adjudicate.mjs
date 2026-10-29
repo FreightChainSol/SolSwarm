@@ -2,8 +2,8 @@
 /**
  * verify-and-adjudicate.mjs
  *
- * Reads individual auditor JSON reports from a specified directory, clusters findings
- * conservatively by cited location and title, and records model review statements.
+ * Reads individual auditor JSON reports from a specified directory, clusters claims
+ * by shared root cause (cited files/lines, see cluster-findings.mjs), and records model review statements.
  * Scores are heuristic priorities, not execution evidence or calibrated confidence.
  *
  * Legacy title-substring tiebreak files are excluded as untrusted overrides.
@@ -20,6 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { clusterFindings, dedupCandidates, isCompoundTitle } from './cluster-findings.mjs';
 import { loadAuditors, providerOf, readReportJson, validCrosscheckRow, writeReportFile } from './report-contract.mjs';
 
 function newestReportDir() {
@@ -60,47 +61,9 @@ for (const { name: auditorName, data } of reports) {
   for (const s of data.at(-1).verified_safe) allVerifiedSafe.push({ ...s, auditor: auditorName, evidence: 'model_assertion' });
 }
 
-// Cluster findings by signature / surface / target
-const clusters = [];
-
-function findCluster(finding) {
-  const normTitle = finding.title.toLowerCase();
-  for (const c of clusters) {
-    if (c.surface.slice(0, 2) !== finding.surface.slice(0, 2)) continue;
-    // Shared prose alone is not a shared root cause.
-    if (normTitle === c.normTitle && c.findings.some((f) => f.location.some((p) => finding.location.includes(p)))) {
-      return c;
-    }
-  }
-  return null;
-}
-
-for (const f of allFindings) {
-  const existing = findCluster(f);
-  if (existing) {
-    existing.findings.push(f);
-    if (!existing.auditors.includes(f.auditor)) existing.auditors.push(f.auditor);
-    if (f.claimId && !existing.claimIds.includes(f.claimId)) existing.claimIds.push(f.claimId);
-    // Upgrade confidence if any has confirmed
-    if (String(f.confidence).startsWith('confirmed')) existing.confidence = 'confirmed';
-    if (SEVERITY_WEIGHT[f.severity] > SEVERITY_WEIGHT[existing.severity]) {
-      existing.severity = f.severity;
-    }
-  } else {
-    const norm = f.title.toLowerCase();
-    clusters.push({
-      id: `CLUSTER-${clusters.length + 1}`,
-      surface: f.surface,
-      primaryTitle: f.title,
-      normTitle: norm,
-      severity: f.severity || 'medium',
-      confidence: f.confidence || 'probable',
-      auditors: [f.auditor],
-      claimIds: f.claimId ? [f.claimId] : [],
-      findings: [f],
-    });
-  }
-}
+// Cluster claims by root cause (see cluster-findings.mjs for the merge rules).
+const clusters = clusterFindings(allFindings);
+const dedup = { rawClaims: allFindings.length, clusters: clusters.length, merged: clusters.filter((c) => c.findings.length > 1).length, candidates: dedupCandidates(clusters), compoundClaims: allFindings.filter((f) => isCompoundTitle(f.title)).map((f) => f.claimId) };
 
 function readJsonArray(file) {
   try {
@@ -200,6 +163,8 @@ const scoredFindings = clusters.map((c) => {
     vendors: Array.from(vendorSet),
     provenance: 'unverified_adapter_identity',
     executionEvidence: 'not_collected',
+    severities: c.severities,
+    compound: c.findings.some((f) => isCompoundTitle(f.title)),
     auditorCount: c.auditors.length,
     auditors: c.auditors,
     claimIds: c.claimIds,
@@ -219,6 +184,7 @@ const outputJsonPath = path.join(reportDir, 'findings-and-scores.json');
 writeReportFile(reportDir, 'findings-and-scores.json', JSON.stringify(scoredFindings, null, 2));
 // controls the auditors attacked that held, for the HTML report
 writeReportFile(reportDir, 'verified-safe.json', JSON.stringify(allVerifiedSafe, null, 2));
+health.dedup = dedup;
 health.security = { state: scoredFindings.some(row => row.status !== 'REFUTED_REVIEW') ? 'review_required' : 'not_certified', unresolvedClaims: scoredFindings.filter(row => row.status !== 'REFUTED_REVIEW').length, note: 'Valid reports and passing tests do not certify security or accept residual risks.' };
 if (health.errors.length > initialErrorCount) health.reviewState = 'incomplete';
 health.state = health.errors.length ? 'incomplete' : 'validated_outputs';
@@ -226,7 +192,7 @@ writeReportFile(reportDir, 'report-health.json', `${JSON.stringify(health, null,
 
 console.log(`\n======================================================`);
 console.log(` Output validation: ${health.state}; ${scoredFindings.length} model-claim clusters`);
-console.log(` Processed from ${allFindings.length} raw findings across ${jsonFiles.length} auditors`);
+console.log(` Processed from ${allFindings.length} raw findings across ${jsonFiles.length} auditors (${dedup.merged} merged clusters, ${dedup.candidates.length} unmerged overlap candidates)`);
 console.log(` Findings & scores written to: ${outputJsonPath}`);
 console.log(`======================================================\n`);
 

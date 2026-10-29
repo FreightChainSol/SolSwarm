@@ -182,6 +182,22 @@ test('matching model claims remain unverified agreement, not quorum proof', (t) 
   assert.equal(row.provenance, 'unverified_adapter_identity');
 });
 
+test('differently titled claims on the same two files merge into one agreeing cluster', (t) => {
+  const f = fixture(t, ['claude', 'grok']);
+  f.save('claude', [finding({ location: ['src/a.ts:10', 'src/b.ts:20'] }), controls]);
+  f.save('grok', [finding({ title: 'Other wording of the defect', location: ['src/a.ts:11', 'src/b.ts:19'] }), finding({ title: 'Unrelated', location: ['src/a.ts:90'] }), controls]);
+  f.cross();
+  assert.equal(run('verify-and-adjudicate.mjs', f.dir).status, 0);
+  const rows = JSON.parse(fs.readFileSync(path.join(f.dir, 'findings-and-scores.json')));
+  assert.equal(rows.length, 2);
+  const merged = rows.find((r) => r.auditorCount === 2);
+  assert.deepEqual([...merged.claimIds].sort(), ['claude-s1-auth#0', 'grok-s1-auth#0']);
+  const health = JSON.parse(fs.readFileSync(path.join(f.dir, 'report-health.json')));
+  assert.equal(health.dedup.rawClaims, 3);
+  assert.equal(health.dedup.merged, 1);
+  assert.equal(health.state, 'validated_outputs');
+});
+
 test('partial and empty cross-check verdict sets remain incomplete', (t) => {
   const f = fixture(t, ['claude', 'grok']);
   f.save('claude');
