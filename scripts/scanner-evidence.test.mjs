@@ -20,6 +20,9 @@ test('scanner failures, error envelopes and malformed output cannot become clean
 test('execution summaries distinguish nonzero tests, failures, skips and absent evidence', () => {
   assert.deepEqual(testCounts('test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\ntest result: ok. 0 passed; 0 failed; 0 ignored'), { passed: 21, failed: 0, skipped: 0 });
   assert.deepEqual(testCounts('# pass 3\n# fail 1\n# skipped 2\n# todo 1\n'), { passed: 3, failed: 1, skipped: 3 });
+  assert.deepEqual(testCounts('ℹ tests 13\nℹ suites 0\nℹ pass 12\nℹ fail 0\nℹ cancelled 0\nℹ skipped 1\nℹ todo 0\n'), { passed: 12, failed: 0, skipped: 1 });
+  assert.deepEqual(testCounts('\x1b[2m Test Files \x1b[22m \x1b[1m\x1b[31m23 failed\x1b[39m | 469 passed (492)\n      Tests  2 failed | 2371 passed (2373)\n'), { passed: 2371, failed: 25, skipped: 0 });
+  assert.deepEqual(testCounts(' Test Files  4 passed (4)\n      Tests  30 passed | 2 skipped (32)\n'), { passed: 30, failed: 0, skipped: 2 });
   assert.deepEqual(testCounts('...\n== 3 failed, 120 passed, 2 skipped, 1 error in 4.21s =='), { passed: 120, failed: 4, skipped: 2 });
   assert.deepEqual(testCounts('........\n8 passed in 0.31s'), { passed: 8, failed: 0, skipped: 0 });
   assert.deepEqual(testCounts('231 failed, 8930 passed, 667 skipped, 7752 warnings, 415 errors, 26 subtests passed in 752.20s (0:12:32)'), { passed: 8930, failed: 646, skipped: 667 });

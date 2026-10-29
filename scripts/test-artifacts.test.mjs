@@ -76,5 +76,7 @@ test('setup failures are named instead of reported as a missing test summary', a
   assert.match(testSetupCause('', "error: couldn't read `/work/src/backend/server/test/fixtures/a.json`: No such file or directory"), /backend\/server\/test\/fixtures\/a\.json/);
   assert.equal(testSetupCause('', "error: couldn't read `/work/target/deploy/x.so`: No such file or directory"), null);
   assert.match(testSetupCause('', 'run `anchor build` first: Os { code: 2 }'), /--test-artifacts/);
+  assert.match(testSetupCause('', "npm error request to https://registry.npmjs.org/esbuild failed: cache mode is 'only-if-cached' but no cached"), /fetches esbuild.*locked devDependency/);
+  assert.match(testSetupCause('', "Error: Cannot find module '.prisma/client/default'"), /Prisma client/);
   assert.equal(testSetupCause('ok', ''), null);
 });

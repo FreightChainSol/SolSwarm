@@ -32,7 +32,15 @@ export function testCounts(stdout) {
     const n = name => Number(pytest.match(new RegExp('(?:^|, )(\\d+) ' + name + '(?:,|$)'))?.[1] || 0);
     return { passed: n('passed'), failed: n('failed') + n('errors?'), skipped: n('skipped') + n('xfailed') };
   }
-  const value = key => stdout.match(new RegExp('^# ' + key + ' (\\d+)\\s*$', 'm'))?.[1];
+  // Vitest: "Tests  2 failed | 2371 passed | 3 skipped (2376)"; files that fail to load report only under "Test Files".
+  const vitest = (label) => {
+    const line = stdout.replace(/\x1b\[[0-9;]*m/g, '').match(new RegExp('^\\s*' + label + '\\s+((?:\\d+ [a-z]+(?: \\| )?)+)', 'm'))?.[1];
+    const n = name => Number(line?.match(new RegExp('(\\d+) ' + name))?.[1] || 0);
+    return line ? { passed: n('passed'), failed: n('failed'), skipped: n('skipped') + n('todo') } : null;
+  };
+  const tests = vitest('Tests'), files = vitest('Test Files');
+  if (tests && files) return { passed: tests.passed, failed: tests.failed + files.failed, skipped: tests.skipped };
+  const value = key => stdout.match(new RegExp('^(?:# |ℹ )' + key + ' (\\d+)\\s*$', 'm'))?.[1];
   if (value('pass') != null && value('fail') != null) return { passed: Number(value('pass')), failed: Number(value('fail')), skipped: Number(value('skipped') || 0) + Number(value('todo') || 0) };
   return null;
 }
@@ -57,6 +65,9 @@ export function testSetupCause(stdout, stderr) {
   const pkg = out.match(/Cannot find package '([^']+)'/)?.[1];
   const cmd = out.match(/sh: \d+: ([\w.@/-]+): not found/)?.[1];
   if (pkg || cmd) return `Dependencies are not installed${pkg ? ` (missing package ${pkg})` : ` (${cmd} not found)`}; npm install only runs from a lockfile, so a package.json without one cannot run its tests.`;
+  const fetched = out.match(/request to https:\/\/registry\.npmjs\.org\/([^\s]+) failed: cache mode is 'only-if-cached'/)?.[1];
+  if (fetched) return `The test script fetches ${decodeURIComponent(fetched)} through npx, which the offline sandbox cannot do; declare it as a locked devDependency.`;
+  if (/Cannot find module '\.prisma\/client/.test(out)) return 'Prisma client is not generated (install scripts are disabled in the sandbox), so suites importing it cannot load.';
   if (/failed to find a workspace root/.test(out)) return 'Cargo crate inherits from a workspace root that is not in the review snapshot.';
   if (/run `anchor build` first/.test(out)) return 'Test needs a prebuilt Solana program or IDL ("run `anchor build` first"); build it separately and supply --test-artifacts <cargo-target-dir>.';
   const input = out.match(/couldn't read `([^`]+)`: No such file or directory/)?.[1];
