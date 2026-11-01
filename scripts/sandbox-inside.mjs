@@ -532,6 +532,16 @@ async function main() {
   try {
   fs.mkdirSync('/work/src', { recursive: true });
   fs.cpSync('/src', '/work/src', { recursive: true, force: true });
+  // The snapshot is sealed read-only and cpSync keeps those modes; suites that write to their own tree (drafts, caches) fail on them.
+  const writable = (dir) => {
+    fs.chmodSync(dir, fs.lstatSync(dir).mode | 0o200);
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) writable(p);
+      else if (ent.isFile()) fs.chmodSync(p, fs.lstatSync(p).mode | 0o200);
+    }
+  };
+  writable('/work/src');
   if (reviewOnly) {
     process.env.CARGO_TARGET_DIR = '/work/target';
     process.env.CARGO_HOME = '/work/cargo';

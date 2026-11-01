@@ -14,7 +14,8 @@ const PY_PROJECT_FILE = /^(?:requirements[\w.-]*\.(?:txt|in)|pyproject\.toml|set
 const PY_TEST_FILE = /(?:^|\/)(?:conftest|test_[^/]*|[^/]*_test)\.py$/;
 
 export function testCommand(kind) {
-  if (kind === 'npm') return { command: 'npm', args: ['--offline', '--ignore-scripts', 'run', 'test'], timeoutMs: 90000 };
+  // Large Vitest/Nest suites run past 90s; the cold-build budget is the same one cargo gets.
+  if (kind === 'npm') return { command: 'npm', args: ['--offline', '--ignore-scripts', 'run', 'test'], timeoutMs: 900000 };
   // A cold Solana/LiteSVM test build exceeds the small JavaScript suite budget.
   if (kind === 'cargo') return { command: 'cargo', args: ['test', '--locked', '--offline'], timeoutMs: 900000 };
   // Interpreter and dependencies are prepared by docker/prepare-python-env.py before the network is disconnected.

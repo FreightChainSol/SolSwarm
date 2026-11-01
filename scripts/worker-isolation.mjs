@@ -11,12 +11,13 @@ export const LIMITS = Object.freeze({ fileBytes: 2 * 1024 * 1024, totalBytes: 51
 const SLUGS = ['auth', 'input', 'logic', 'config', 'deps', 'client'];
 const SKIP_DIRS = new Set(['__snapshots__', 'vendor', 'venv', '.venv', 'out', '.turbo', '.cache', '.idea', '.vscode', '.git', 'node_modules', 'target', 'dist', 'build', '.next', 'coverage', '__pycache__', '.cargo', '.ssh', '.aws', '.docker', '.kube', '.grok', '.codex', '.gemini', '.agy', 'secrets']);
 const SKIP_PATHS = new Set(['.claude/worktrees', 'docs', 'doc', 'social', 'tests/audit', 'tests/audit/reports', 'audit/reports', 'audit/pocs', 'audit/theme-previews', 'docs/reviews']);
-const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.json', '.yaml', '.yml', '.toml', '.rs', '.go', '.py', '.rb', '.php', '.java', '.kt', '.cs', '.c', '.h', '.cpp', '.hpp', '.sql', '.html', '.sh', '.lock', '.prisma', '.proto', '.xml', '.properties', '.gradle', '.scala', '.swift', '.vue', '.svelte', '.graphql', '.ini', '.cfg', '.tf', '.tfvars', '.hcl', '.lua', '.sol', '.vy', '.move', '.cairo', '.dockerfile', '.mk', '.css', '.txt', '.webmanifest', '.md']);
+const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.json', '.yaml', '.yml', '.toml', '.rs', '.go', '.py', '.rb', '.php', '.java', '.kt', '.cs', '.c', '.h', '.cpp', '.hpp', '.sql', '.html', '.sh', '.lock', '.prisma', '.proto', '.xml', '.properties', '.gradle', '.scala', '.swift', '.vue', '.svelte', '.graphql', '.ini', '.cfg', '.tf', '.tfvars', '.hcl', '.lua', '.sol', '.vy', '.move', '.cairo', '.dockerfile', '.mk', '.css', '.txt', '.webmanifest', '.svg', '.md']);
 // Documentation, API specs, bundles and generated artifacts are not audit source.
 // Lockfiles stay: the sandbox installs test dependencies from them and the dependency scanners read them.
 // SKIP_DIRS match a directory name at any depth, so only generic output names belong there; names that
 // can also be real source (docs, social, openapi) are anchored in SKIP_PATHS to the repository root.
-// Fixtures and public/ stay: existing tests read them at run or compile time.
+// Fixtures and public/ stay: existing tests read them at run or compile time. SVG is text, so site tests that
+// check for it exist; binary media (webp, mp4, fonts) stays out of the text-only snapshot.
 const SKIP_NAME = /^(readme|changelog|license|licence|notice|authors|contributors|code_of_conduct|security)(\..*)?$|^(swagger|openapi)[^/]*\.(json|ya?ml)$|\.(min\.js|min\.css|map|d\.ts|snap|log)$/i;
 const OWNED = new Map();
 const CAPTURES = new WeakMap();

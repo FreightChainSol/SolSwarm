@@ -35,7 +35,7 @@ test('snapshots record explicit omissions without copying named credentials or l
 test('snapshots keep what existing tests and dependency installs read, and drop only root-level non-source trees', (t) => {
   const source = fixture(t);
   const put = (rel, text = 'x\n') => { fs.mkdirSync(path.dirname(path.join(source, rel)), { recursive: true }); fs.writeFileSync(path.join(source, rel), text); };
-  const kept = ['.dockerignore', 'app/package-lock.json', 'app/test/fixtures/cases.json', 'app/public/robots.txt', 'app/src/style.css', 'app/src/social/feed.ts', 'app/src/http/openapi/schema.ts', 'app/test/docs/as-built.ts'];
+  const kept = ['.dockerignore', 'app/package-lock.json', 'app/test/fixtures/cases.json', 'app/public/robots.txt', 'app/public/media/logo.svg', 'app/src/style.css', 'app/src/social/feed.ts', 'app/src/http/openapi/schema.ts', 'app/test/docs/as-built.ts'];
   const dropped = ['docs/spec.json', 'social/post.json', 'tests/audit/runtime/package.json', 'app/README.md', 'app/dist/bundle.js'];
   for (const rel of [...kept, ...dropped]) put(rel);
   const snapshot = createSnapshot(source);
