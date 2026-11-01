@@ -474,6 +474,7 @@ export function renderEcosystemLines(profile) {
     row('Node/TypeScript', eco.node, eco.node.frameworks.length ? `; frameworks: ${eco.node.frameworks.join(', ')}` : ''),
     row('Rust', eco.rust),
     `- **Solana program**: ${eco.solana.detected ? `DETECTED (${eco.solana.marks.slice(0, 4).join(', ')})` : 'absent'}`,
+    `- **NEAR**: ${eco.near?.detected ? `DETECTED (${eco.near.contracts ? 'near-sdk contract' : 'no near-sdk crate'}; ${(eco.near.kinds || []).join(', ') || 'no kind'}; ${(eco.near.marks || []).slice(0, 4).join(', ')})` : 'absent'}`,
     `- Primary stack(s) by production source: ${eco.primary.join(', ') || 'none'}${eco.unsupported?.length ? `; no dedicated harness for: ${eco.unsupported.join(', ')}` : ''}`,
   ];
 }
@@ -582,17 +583,35 @@ const SOLANA_SURFACE = {
   S5: ['- Solana: audit verifiable-build pinning (`cargo-build-sbf`, `solana-verify`) and RustSec advisories in `Cargo.lock`.'],
 };
 
+const NEAR_CONTRACT_SURFACE = {
+  S1: ['- NEAR contract: every public method is intentional. Callbacks use `#[private]` or an equivalent predecessor check. Authorization chooses `predecessor_account_id` or `signer_account_id` deliberately. Sensitive methods that require a full-access key use one yoctoNEAR. Read the checklist in source; do not fetch it from the sandbox.'],
+  S3: ['- NEAR contract: users pay for storage growth, collection prefixes are unique, balances are locked before a transfer, and callbacks are `#[private]` and settle success and failure. `ft_on_transfer` checks the fungible-token predecessor. `ft_resolve_transfer` is private. Release builds set `overflow-checks = true` or use checked arithmetic. In `markdown_summary` add a NEAR paragraph: files reviewed, controls verified, and that cargo test was not run.'],
+  S5: ['- NEAR contract: record the `near-sdk` pin. RustSec still runs through the existing offline `cargo audit` when `Cargo.lock` is present. `cargo near build reproducible-wasm` needs Docker and ignores uncommitted changes, so it is outside this review. Do not install the wasm target and do not deploy.'],
+};
+
+const NEAR_CLIENT_SURFACE = {
+  S1: ['- NEAR client: `KeyPair.fromString`, an `ed25519:` secret, and the near CLI keychain are key custody. Report the source. Do not extract or use the key, and do not read the CLI configuration.'],
+  S3: ['- NEAR Intents: `@defuse-protocol/one-click-sdk-typescript`, `@defuse-protocol/intents-sdk`, and `@near-intents-agent-api/sdk` are recognition only. Do not request a quote, submit a deposit, or call the agent API.'],
+  S5: ['- NEAR AI: `@neardefi/shade-agent-js` is an unaudited published library, not a deprecated package to remove. Do not install it. Do not run `npx skills add` or `npm install` of NEAR SDKs during the review.'],
+  S6: ['- NEAR client: `@hot-labs/near-connect` and `near-api-js` sign and broadcast. Review how the wallet is asked to sign. `v1.signer` is a lead, not a mainnet read. Do not call `cloud-api.near.ai`, `1click.chaindefuser.com`, `agentsonintents.com`, OutLayer, or NEAR MCP.'],
+};
+
 // With a profile, only the detected ecosystems' guidance is emitted; with none, every stack is included.
 export function renderSurfaceSkillGuidance(surfaceCode, profile) {
   const code = /^S[1-6]$/i.test(String(surfaceCode)) ? String(surfaceCode).toUpperCase() : 'S1';
   const eco = profile?.ecosystems;
   const want = (name) => !eco || eco[name]?.detected;
+  const nearKinds = new Set(eco?.near?.kinds || []);
+  const nearContract = !eco || Boolean(eco?.near?.contracts);
+  const nearClient = !eco || ['client', 'intents', 'ai'].some((kind) => nearKinds.has(kind));
   const [title, domains] = SURFACE_TITLES[code];
   const lines = [`### ${code} Skill Focus — ${title} (${domains})`];
-  if (eco) lines.push(`Detected stack: ${eco.primary.join(', ') || 'unknown'}${eco.python?.frameworks?.length ? ` (Python frameworks: ${eco.python.frameworks.join(', ')})` : ''}${eco.solana?.detected ? '; Solana program present' : ''}. Do not apply checks for ecosystems that are absent.`);
+  if (eco) lines.push(`Detected stack: ${eco.primary.join(', ') || 'unknown'}${eco.python?.frameworks?.length ? ` (Python frameworks: ${eco.python.frameworks.join(', ')})` : ''}${eco.solana?.detected ? '; Solana program present' : ''}${eco.near?.detected ? `; NEAR (${eco.near.contracts ? 'contract' : 'no contract crate'}${eco.near.kinds?.length ? `: ${eco.near.kinds.join(', ')}` : ''})` : ''}. Do not apply checks for ecosystems that are absent.`);
   if (want('python')) lines.push(...PYTHON_SURFACE[code]);
   if (want('node')) lines.push(...NODE_SURFACE[code]);
   if (want('solana')) lines.push(...(SOLANA_SURFACE[code] || []));
+  if (want('near') && nearContract) lines.push(...(NEAR_CONTRACT_SURFACE[code] || []));
+  if (want('near') && nearClient) lines.push(...(NEAR_CLIENT_SURFACE[code] || []));
   lines.push(
     '',
     '### Mandatory Cross-Cutting Skill Checks (Apply to Every Surface)',

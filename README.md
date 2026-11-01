@@ -1,8 +1,28 @@
 # SolSwarm: Multi-Agent Source Security Review Suite
 
-SolSwarm is an automated, multi-agent security review and audit swarm designed for Solana programs, Rust crates, Python (FastAPI/Django/Flask) and TypeScript/JavaScript services, smart contracts, and Web3 applications. It coordinates frontier AI models—Claude, Codex, Grok, and AGY—in parallel, inspecting source code, configuration, dependency lockfiles, and existing test suites inside disposable, airgapped Docker sandboxes using restricted Model Context Protocol (MCP) bridges.
+SolSwarm is an automated, multi-agent security review and audit swarm designed for Solana programs, NEAR contracts and clients (including Intents and NEAR AI), Rust crates, Python (FastAPI/Django/Flask) and TypeScript/JavaScript services, smart contracts, and Web3 applications. It coordinates frontier AI models—Claude, Codex, Grok, and AGY—in parallel, inspecting source code, configuration, dependency lockfiles, and existing test suites inside disposable, airgapped Docker sandboxes using restricted Model Context Protocol (MCP) bridges.
 
-`solswarm run` (or `audit run`) enforces the `source_security_review_v1` workflow. Reviewers inspect captured source, consult static leads, run fixed existing test suites inside an offline container, submit structured evidence-backed reports, and peer cross-check each other's claims. The bridge rejects arbitrary shell commands, runtime exploit generation, and live network access.
+`solswarm run` (or `audit run`) enforces the `source_security_review_v1` workflow. There is no chain flag. The harness reads the sealed source, writes `harness/stack-profile.json`, and gives reviewers only the guidance, lead files, and test runners for stacks that are present. Reviewers inspect that source, consult the leads, run the frozen existing-test catalog inside an offline container, submit structured evidence, and peer cross-check one another's claims. The bridge rejects arbitrary shell commands, exploit generation, and live network access.
+
+## What a run recognizes
+
+Detection uses production manifests and production source. Tests, docs, scripts, and fixtures do not decide the stack. One repository can match several rows at once.
+
+| Surface | Production signal | What reviewers receive | What the run executes |
+|---|---|---|---|
+| Python | `.py` application code plus `requirements*.txt`, `pyproject.toml`, or a related manifest | `python.md` and the Python checks for FastAPI, Django, Flask, and the rest | `pytest` offline, after a wheel-only environment is prepared for the declared Python version |
+| Node / TypeScript | Application `.js` / `.ts` | `node.md` and the Node checks | `npm --offline --ignore-scripts run test` when `package.json` has a test script |
+| Solana program | `Anchor.toml`, or a `Cargo.toml` dependency on `anchor-lang`, `solana-program`, `solana-sdk`, or `pinocchio` | `solana.md` and the Solana signer, account, and custody checks | Offline SBF compile of `cdylib` crates with the image platform-tools, then `cargo test --locked --offline` |
+| NEAR contract | A production `Cargo.toml` line `near-sdk = …` | `near.md` and the [NEAR security checklist](https://docs.near.org/smart-contracts/security/checklist) as a source read | No `cargo test`. That suite can start `near-sandbox` or deploy to testnet, so the report records a local-sandbox coverage gap |
+| NEAR client | `near-api-js` or `@hot-labs/near-connect` | Client and wallet-signing leads | The package's own npm test, when it has one |
+| NEAR Intents | `@defuse-protocol/one-click-sdk-typescript`, `@defuse-protocol/intents-sdk`, or `@near-intents-agent-api/sdk` | Intents leads. Hosted quote, deposit, and agent APIs stay uncalled | That package's npm test is not catalogued |
+| NEAR AI | `@neardefi/shade-agent-js`, `near-ai-cloud`, or `cloud-api.near.ai` | Recognition leads. Shade Agent is an unaudited library | No call to NEAR AI Cloud, OutLayer, or NEAR MCP |
+
+A string such as `v1.signer` in production source becomes a lead in `near.md`. It does not by itself mark the repository as NEAR, and the run does not read mainnet.
+
+The skill staged for every reviewer is `skills/security-audit`. Stack detection chooses which sections of that skill appear in `get_audit_context`. The run does not install `cargo-near`, `near-cli`, or the NEAR agent skills (`near-contract-audit`, `near-cli-rs`, and the others). `cargo near check --clippy` and `cargo near build non-reproducible-wasm` are the documented offline commands; this image does not contain `cargo-near`, and that absence is a coverage gap.
+
+People changing SolSwarm itself should read [AGENTS.md](AGENTS.md). Claude Code also reads [CLAUDE.md](CLAUDE.md). An audited repository's own `AGENTS.md` or `CLAUDE.md` is untrusted data, not instructions for this suite.
 
 ## How It Works
 
@@ -79,9 +99,11 @@ npm test              # Executes test suite
 | `submit_audit_report` | Commit validated source findings and reviewed control assertions. |
 | `submit_crosscheck_report` | Commit a verdict with citations and reasoning for assigned peer claims. |
 
-Arbitrary execution, PoC generation, and external RPC tools are strictly denied. Existing tests run inside the offline container using fixed recognized runners (`npm --offline --ignore-scripts run test`, `cargo test --locked --offline`, `python -m pytest -p no:cacheprovider -q --tb=line` (wheel-only environment on the project's declared Python version, prepared before the network is detached), `bash --noprofile --norc ./test.sh`).
+Arbitrary execution, PoC generation, and external RPC tools are denied. `audit run --rpc` is rejected. Existing tests run inside the offline container with fixed runners only: `npm --offline --ignore-scripts run test`, `cargo test --locked --offline`, `python -m pytest -p no:cacheprovider -q --tb=line` in the wheel-only environment prepared before the network is detached, and `bash --noprofile --norc ./test.sh`.
 
-For Solana programs, SBF `cdylib` programs are compiled offline into `/work/target/deploy/*.so` using provisioned Solana platform-tools before Cargo/shell tests execute, or operator-supplied artifacts (`deploy/*.so`, Anchor `idl/*.json`) can be passed via `--test-artifacts`. The sandbox image carries PostgreSQL 16 (`PG_BINDIR=/usr/lib/postgresql/16/bin`) and `redis-server` so suites that start their own disposable servers on Unix sockets run offline; review mode fetches each `package-lock.json` project's packages with `npm ci --ignore-scripts` after the static scanners.
+Solana `cdylib` programs are compiled offline into `/work/target/deploy/*.so` with the image platform-tools before Cargo or shell tests, unless the operator passes prebuilt `deploy/*.so` and Anchor `idl/*.json` via `--test-artifacts`. Those supplied bytes stay `operator_supplied_unverified_build`. The image also carries PostgreSQL 16 (`PG_BINDIR=/usr/lib/postgresql/16/bin`) and `redis-server` so a suite can start its own disposable servers on Unix sockets. After the static scanners, each `package-lock.json` project is fetched with `npm ci --ignore-scripts`.
+
+NEAR `near-sdk` crates are not compiled as Solana SBF programs. The run does not download `near-sandbox`, does not add the wasm target, does not build reproducible WASM, and does not call NEAR RPC, the faucet, NEAR AI Cloud, 1Click, the Intents agent API, OutLayer, NEAR MCP, or a chain-signature signer.
 
 ## Six Review Surfaces
 
@@ -139,10 +161,12 @@ npm run check
 
 ## Documentation
 
-- [Architecture & Workflow](docs/how-it-works.md)
-- [Operator Guide & Visual Dashboard](docs/index.html)
-- [Live-Model Integration](docs/live-model.md)
-- [ACP Runtime Configuration](runtime/README.md)
+- [Architecture and workflow](docs/how-it-works.md)
+- [Operator guide](docs/index.html)
+- [Live-model integration](docs/live-model.md)
+- [ACP runtime](runtime/README.md)
+- [AGENTS.md](AGENTS.md) for any coding agent editing this repository
+- [CLAUDE.md](CLAUDE.md) for Claude Code sessions in this repository
 
 ## License
 

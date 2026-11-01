@@ -45,6 +45,29 @@ test('a Python service with a Node helper script is routed as Python, with frame
   assert.doesNotMatch(guidance, /Solana\/Anchor/);
 });
 
+test('NEAR contracts and clients are detected from production manifests only', t => {
+  const root = tree(t, {
+    'contracts/Cargo.toml': '[package]\nname = "c"\nversion = "0.1.0"\n\n[dependencies]\nnear-sdk = "5.29.0"\n',
+    'app/package.json': JSON.stringify({ dependencies: { 'near-api-js': '1.0.0', '@defuse-protocol/intents-sdk': '1.0.0', '@neardefi/shade-agent-js': '1.0.0' } }),
+    'tests/hidden/Cargo.toml': '[dependencies]\nnear-sdk = "5.29.0"\n',
+    'docs/note.js': 'const mpc = "v1.signer";\n',
+  });
+  const eco = detectEcosystems(root);
+  assert.equal(eco.near.detected, true);
+  assert.equal(eco.near.contracts, true);
+  assert.deepEqual(eco.near.kinds, ['ai', 'client', 'contract', 'intents']);
+  assert.ok(eco.near.marks.includes('contracts/Cargo.toml'));
+  assert.ok(eco.near.marks.includes('app/package.json'));
+  assert.ok(!eco.near.marks.some((mark) => mark.startsWith('tests/') || mark.startsWith('docs/')));
+  const guidance = renderSurfaceSkillGuidance('S3', analyzeStackAndPlans(root));
+  assert.match(guidance, /NEAR contract/);
+  assert.match(guidance, /NEAR Intents/);
+  const plain = tree(t, { 'svc/app.py': 'x = 1\n' });
+  assert.equal(detectEcosystems(plain).near.detected, false);
+  assert.equal(detectEcosystems(plain).near.contracts, false);
+  assert.doesNotMatch(renderSurfaceSkillGuidance('S3', analyzeStackAndPlans(plain)), /NEAR contract/);
+});
+
 test('without a profile every stack is covered, and a test-only marker does not activate a domain', t => {
   assert.match(renderSurfaceSkillGuidance('S5'), /Python: audit `requirements/);
   assert.match(renderSurfaceSkillGuidance('S5'), /Node: audit/);

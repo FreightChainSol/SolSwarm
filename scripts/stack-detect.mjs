@@ -26,10 +26,15 @@ const PY_FRAMEWORKS = [
   ['sqlalchemy', /\bsqlalchemy\b/i], ['alembic', /\balembic\b/i], ['pydantic', /\bpydantic\b/i], ['celery', /\bcelery\b/i],
   ['redis', /\bredis\b/i], ['websockets', /\bwebsockets\b/i], ['python-jose', /python-jose|\bjose\b/i], ['pyjwt', /\bpyjwt\b|\bimport jwt\b/i],
   ['boto3', /\bboto3\b/i], ['grpc', /\bgrpcio\b/i], ['solana-py', /\bsolders\b|\bsolana\b/i],
+  ['py-near', /\bpy-near\b/i],
 ];
 const NODE_FRAMEWORKS = [
   ['express', /["']express["']/], ['nestjs', /@nestjs\//], ['fastify', /["']fastify["']/], ['next', /["']next["']/],
   ['react', /["']react["']/], ['vite', /["']vite["']/], ['solana-web3', /@solana\/web3\.js|@solana\/kit|@coral-xyz|@anchor-lang/],
+  ['near-api-js', /["']near-api-js["']|@near-js\//],
+  ['near-connect', /["']@hot-labs\/near-connect["']/],
+  ['near-intents', /["']@defuse-protocol\/(?:one-click-sdk-typescript|intents-sdk)["']|["']@near-intents-agent-api\/sdk["']/],
+  ['near-ai', /["']@neardefi\/shade-agent-js["']|cloud-api\.near\.ai|["']near-ai-cloud["']/],
 ];
 
 function walk(root, onFile) {
@@ -72,7 +77,13 @@ export function detectEcosystems(targetRoot) {
   const node = { manifests: [], lockfiles: [], sourceFiles: 0, testFiles: 0, frameworks: new Set() };
   const rust = { manifests: [], sourceFiles: 0 };
   const solana = { marks: [] };
+  const near = { marks: [], kinds: new Set() };
   const other = { go: 0, java: 0, ruby: 0, php: 0 };
+  const markNear = (relPath, kinds) => {
+    if (!kinds.length || !isProductionPath(relPath)) return;
+    near.marks.push(relPath);
+    for (const kind of kinds) near.kinds.add(kind);
+  };
 
   walk(root, (file, name) => {
     const rel = path.relative(root, file).split(path.sep).join('/');
@@ -89,10 +100,18 @@ export function detectEcosystems(targetRoot) {
       node.manifests.push(rel);
       const text = read(file);
       for (const [id, re] of NODE_FRAMEWORKS) if (re.test(text)) node.frameworks.add(id);
+      const nearKinds = [];
+      if (/["']near-api-js["']|@near-js\/|["']@hot-labs\/near-connect["']/.test(text)) nearKinds.push('client');
+      if (/["']@defuse-protocol\/(?:one-click-sdk-typescript|intents-sdk)["']|["']@near-intents-agent-api\/sdk["']/.test(text)) nearKinds.push('intents');
+      if (/["']@neardefi\/shade-agent-js["']|cloud-api\.near\.ai|["']near-ai-cloud["']/.test(text)) nearKinds.push('ai');
+      markNear(rel, nearKinds);
     } else if (['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'].includes(name)) node.lockfiles.push(rel);
     else if (name === 'Cargo.toml') {
       rust.manifests.push(rel);
-      if (/anchor-lang|solana-program|solana-sdk|pinocchio/.test(read(file))) solana.marks.push(rel);
+      const text = read(file);
+      if (/anchor-lang|solana-program|solana-sdk|pinocchio/.test(text)) solana.marks.push(rel);
+      // docs.near.org/tools/sdk: the only official contract SDK is near-sdk-rs, crate near-sdk.
+      if (/(?:^|\n)\s*near-sdk\s*=/.test(text)) markNear(rel, ['contract']);
     } else if (name === 'Anchor.toml') solana.marks.push(rel);
 
     if (ext === '.py') {
@@ -126,7 +145,13 @@ export function detectEcosystems(targetRoot) {
   };
   const solanaEco = { detected: solana.marks.length > 0, marks: [...new Set(solana.marks)].sort().slice(0, 20) };
   const rustEco = { detected: rust.sourceFiles > 0, sourceFiles: rust.sourceFiles, manifests: rust.manifests.sort().slice(0, 30) };
-  const ecosystems = { python, node: nodeEco, rust: rustEco, solana: solanaEco };
+  const nearEco = {
+    detected: near.marks.length > 0,
+    contracts: near.kinds.has('contract'),
+    marks: [...new Set(near.marks)].sort().slice(0, 20),
+    kinds: [...near.kinds].sort(),
+  };
+  const ecosystems = { python, node: nodeEco, rust: rustEco, solana: solanaEco, near: nearEco };
   const primary = Object.entries({ python: python.sourceFiles, node: nodeEco.sourceFiles, rust: rustEco.sourceFiles })
     .filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([id]) => id);
   return { ...ecosystems, primary, unsupported: Object.entries(other).filter(([, n]) => n).map(([id]) => id) };

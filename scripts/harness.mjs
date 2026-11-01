@@ -81,6 +81,46 @@ const SOLANA_PATTERNS = [
     note: 'Direct lamport edit (try_borrow_mut_lamports or .lamports.borrow_mut). Confirm the account is program-owned, the rent floor holds, and this is not a second close.' },
 ];
 
+// Greppable subset of https://docs.near.org/smart-contracts/security/checklist. A hit is a lead.
+const NEAR_CONTRACT_PATTERNS = [
+  { id: 'signer-account-id', cls: 'access control', re: /\benv::signer_account_id\s*\(/g,
+    note: 'signer_account_id is the transaction signer. predecessor_account_id is the immediate caller. Confirm this method means the signer rule.' },
+  { id: 'init-ignore-state', cls: 'migration', re: /#\[\s*init\s*\(\s*ignore_state\s*\)\s*\]/g,
+    note: 'Migration runs against existing state. Confirm it is access-controlled and does not reset balances.' },
+  { id: 'promise-call', cls: 'cross-contract', re: /\bPromise::new\s*\(|\.then\s*\(/g,
+    note: 'Cross-contract call. The callback must be #[private], handle success and failure, and commit outcome-dependent state in the callback.' },
+  { id: 'promise-result', cls: 'cross-contract', re: /\benv::promise_result\s*\(|\bPromiseResult::/g,
+    note: 'Callback result. Confirm failure settles without panicking and refunds stay bounded.' },
+  { id: 'ft-entry', cls: 'NEP-141', re: /\bfn\s+ft_(?:transfer(?:_call)?|on_transfer|resolve_transfer)\s*\(/g,
+    note: 'Fungible-token entry. Confirm one yoctoNEAR on transfers, a predecessor check on ft_on_transfer, and a private ft_resolve_transfer.' },
+  { id: 'unchecked-arith', cls: 'arithmetic', re: /\bwrapping_(?:add|sub|mul)\s*\(|\bunchecked_(?:add|sub|mul)\s*\(/g,
+    note: 'Wraps silently. Release builds need overflow-checks = true, or a checked operation.' },
+  { id: 'lossy-cast', cls: 'arithmetic', re: /\bas\s+(?:u8|u16|u32|u64|i8|i16|i32|i64)\b/g,
+    note: 'Narrowing cast truncates. Confirm the value is range-checked first.' },
+  { id: 'panic-path', cls: 'availability', re: /\.unwrap\s*\(\s*\)|\.expect\s*\(|\bpanic!\s*\(/g,
+    note: 'Panics abort the receipt. A finding when attacker-supplied state can block settlement or a refund.' },
+  { id: 'random-seed', cls: 'economic', re: /\benv::random_seed\s*\(/g,
+    note: 'Block-producer influenced. Confirm the value at risk. Do not treat the seed as a secret.' },
+];
+
+// Client, Intents, and NEAR AI recognition. Do not call the hosts.
+const NEAR_CLIENT_PATTERNS = [
+  { id: 'near-secret-key', cls: 'key custody', re: /\bed25519:[1-9A-HJ-NP-Za-km-z]{40,}/g,
+    note: 'NEAR secret-key shape. Report the source. Do not extract, store, or use the key.' },
+  { id: 'keypair-from-string', cls: 'key custody', re: /KeyPair\.fromString\s*\(/g,
+    note: 'Key material passed into a signer. Confirm it is not a literal or a committed env value.' },
+  { id: 'near-ai-host', cls: 'NEAR AI', re: /cloud-api\.near\.ai/g,
+    note: 'NEAR AI Cloud. Recognition only. Do not call the host or attach an API key.' },
+  { id: 'intents-host', cls: 'NEAR Intents', re: /1click\.chaindefuser\.com|api(?:\.demo)?\.agentsonintents\.com/g,
+    note: '1Click or the Intents agent API. Do not request a quote, submit a deposit, or send an API key.' },
+  { id: 'chain-sig-contract', cls: 'chain signatures', re: /\bv1\.signer\b/g,
+    note: 'Chain-signature MPC contract. A string here is a lead, not a stack mark. Do not read mainnet state or send a sign request.' },
+  { id: 'shade-agent', cls: 'NEAR AI', re: /@neardefi\/shade-agent-js/g,
+    note: 'Published Shade Agent library. The README warns it is unaudited. This is not a deprecation mark. Do not install it or send a sponsor key.' },
+  { id: 'outlayer-host', cls: 'off-chain compute', re: /outlayer\.fastnear\.com/g,
+    note: 'OutLayer decrypts credentials inside an enclave. Do not send jobs or secrets.' },
+];
+
 const WEB_PATTERNS = [
   { id: 'xss-html', surface: 'S6', re: /\.innerHTML\s*=|\.outerHTML\s*=|\binsertAdjacentHTML\s*\(|\bdocument\.write\s*\(/g,
     note: 'Sink. A finding only when data the attacker influences reaches it.' },
@@ -660,6 +700,63 @@ function solanaVersions(root, marks) {
   ];
 }
 
+function nearVersions(root, contract) {
+  if (!contract) return ['No near-sdk manifest in this mark set. Contract version and overflow-checks are not applied.'];
+  const deps = new Map();
+  let overflow = false;
+  let profile = false;
+  walk(root, (file) => {
+    if (path.basename(file) !== 'Cargo.toml' || !isProductionPath(rel(root, file))) return;
+    const text = readText(file) || '';
+    for (const m of text.matchAll(/^\s*(near-sdk)\s*=\s*(?:"([^"]+)"|\{[^}]*?version\s*=\s*"([^"]+)")/gm)) deps.set(m[1], m[2] || m[3]);
+    if (/^\s*\[profile\.release\]/m.test(text)) profile = true;
+    if (/overflow-checks\s*=\s*true/.test(text)) overflow = true;
+  });
+  return [
+    `Versions in use: ${[...deps].map(([k, v]) => `${k} ${v}`).join(', ') || 'none declared'}.`,
+    overflow ? 'Release profile sets overflow-checks = true.' : `LEAD: no manifest sets overflow-checks = true${profile ? ' ([profile.release] present without it)' : ' (no [profile.release])'}. Release builds then wrap on overflow unless every operation is checked_*.`,
+  ];
+}
+
+function writeNear(root, eco) {
+  const kinds = new Set(eco?.kinds || []);
+  const contract = Boolean(eco?.contracts) || kinds.has('contract');
+  const markedClient = ['client', 'intents', 'ai'].some((kind) => kinds.has(kind));
+  const absent = '# NEAR leads\n\nNo production near-sdk Cargo.toml and no production manifest for near-api-js, NEAR Connect, NEAR Intents, or NEAR AI. NEAR surface absent.\n';
+  const nodeExt = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
+  const js = collect(root, (file, ext) => (nodeExt.has(ext) || path.basename(file) === 'package.json') && isProductionPath(rel(root, file)), NEAR_CLIENT_PATTERNS);
+  const jsSection = section(NEAR_CLIENT_PATTERNS, js.found);
+  // v1.signer and the hosted APIs are leads in production source. They do not mark the stack.
+  if (!eco?.detected && !contract && jsSection.total === 0) return { leads: 0, files: 0, body: absent };
+  let files = js.files;
+  let total = 0;
+  const parts = [];
+  if (contract) {
+    const rust = collect(root, (file, ext) => ext === '.rs' && isProductionPath(rel(root, file)), NEAR_CONTRACT_PATTERNS);
+    files += rust.files;
+    const sec = section(NEAR_CONTRACT_PATTERNS, rust.found);
+    total += sec.total;
+    parts.push(sec.body);
+  }
+  if (markedClient || eco?.detected || jsSection.total > 0) {
+    total += jsSection.total;
+    parts.push(jsSection.body);
+  }
+  const header = [
+    '# NEAR leads',
+    '',
+    'Regex leads only. Not findings. Reviewers read source against the NEAR smart contract security checklist. Do not fetch that page from the sandbox.',
+    'Checklist: https://docs.near.org/smart-contracts/security/checklist',
+    'Do not deploy, do not run near-sandbox, do not call NEAR RPC, the faucet, NEAR AI Cloud, 1Click, the Intents agent API, OutLayer, or NEAR MCP, and do not read the near CLI keychain.',
+    `Kinds: ${[...kinds].join(', ') || 'unspecified'}. Contracts: ${contract ? 'yes' : 'no'}. Marks: ${(eco?.marks || []).join(', ') || 'none'}.`,
+    ...nearVersions(root, contract),
+    `Files scanned: ${files}. Leads listed: ${total} (capped at ${PER_PATTERN} per pattern).`,
+    '',
+    parts.join('\n'),
+  ];
+  return { leads: total, files, body: header.join('\n') };
+}
+
 function writeSolana(root, marks) {
   if (!marks.length) {
     return { leads: 0, files: 0, body: '# Solana leads\n\nNo Anchor.toml and no Cargo.toml dependency on anchor-lang, solana-program, solana-sdk, or pinocchio. Solana surface absent.\n' };
@@ -742,6 +839,8 @@ async function scan(target, outDir, noDeps) {
   const web = writeWeb(root);
   const config = writeConfig(root);
   const stackProfile = analyzeStackAndPlans(root);
+  const nearEco = stackProfile.ecosystems?.near;
+  const near = writeNear(root, nearEco);
   const python = writePython(root, stackProfile.ecosystems);
   const node = writeNode(root, stackProfile.ecosystems);
   const attackPlansMd = renderReviewPlansMarkdown(stackProfile);
@@ -750,6 +849,7 @@ async function scan(target, outDir, noDeps) {
   const tools = noDeps ? '# Scanner leads\n\nSkipped (--no-deps).\n' : await writeTools(root, outDir);
   fs.writeFileSync(path.join(outDir, 'scanner-results.json'), JSON.stringify({ version: 1, rustsecRevision: fs.existsSync('/opt/audit-scanners/rustsec-revision.txt') ? fs.readFileSync('/opt/audit-scanners/rustsec-revision.txt', 'utf8').trim() : null, databases: fs.existsSync('/opt/audit-scanners/databases.sha256') ? fs.readFileSync('/opt/audit-scanners/databases.sha256', 'utf8') : null, preparedAt: fs.existsSync('/opt/audit-scanners/prepared-at.txt') ? fs.readFileSync('/opt/audit-scanners/prepared-at.txt', 'utf8').trim() : null, rules: fs.existsSync('/opt/audit-scanners/rules.sha256') ? fs.readFileSync('/opt/audit-scanners/rules.sha256', 'utf8') : null, checks: scannerChecks }, null, 2));
   fs.writeFileSync(path.join(outDir, 'solana.md'), solana.body);
+  fs.writeFileSync(path.join(outDir, 'near.md'), near.body);
   fs.writeFileSync(path.join(outDir, 'web.md'), web.body);
   fs.writeFileSync(path.join(outDir, 'python.md'), python.body);
   fs.writeFileSync(path.join(outDir, 'node.md'), node.body);
@@ -764,6 +864,7 @@ async function scan(target, outDir, noDeps) {
     `target: ${root}`,
     `detected stacks: ${stackProfile.detectedStacks.join(', ') || 'none'}`,
     `solana stack: ${marks.length ? 'yes' : 'no'} (${solana.leads} leads, ${solana.files} rust files)`,
+    `near stack: ${nearEco?.detected ? 'yes' : 'no'} (${near.leads} leads, ${near.files} files; kinds: ${(nearEco?.kinds || []).join(', ') || 'none'}; contracts: ${nearEco?.contracts ? 'yes' : 'no'})`,
     `python: ${stackProfile.ecosystems.python.detected ? 'yes' : 'no'} (${python.leads} leads, ${python.files} production files; frameworks: ${stackProfile.ecosystems.python.frameworks.join(', ') || 'none'}; test runner: ${stackProfile.ecosystems.python.hasPytestSignal ? 'pytest' : 'none found'})`,
     `stacks by production source: ${stackProfile.ecosystems.primary.join(', ') || 'none'}`,
     `node: ${stackProfile.ecosystems.node.detected ? 'yes' : 'no'} (${node.leads} leads, ${node.files} production files; frameworks: ${stackProfile.ecosystems.node.frameworks.join(', ') || 'none'})`,
@@ -777,13 +878,14 @@ async function scan(target, outDir, noDeps) {
     '',
   ].join('\n');
   fs.writeFileSync(path.join(outDir, 'summary.md'), summary);
-  return { solana: solana.leads, web: web.leads, python: python.leads, node: node.leads, stacks: stackProfile.detectedStacks };
+  return { solana: solana.leads, near: near.leads, web: web.leads, python: python.leads, node: node.leads, stacks: stackProfile.detectedStacks };
 }
 
 function selfTest() {
   const here = path.dirname(new URL(import.meta.url).pathname);
   const fx = path.join(here, 'harness-fixtures');
   const solana = writeSolana(path.join(fx, 'solana'), ['Cargo.toml']);
+  const near = writeNear(path.join(fx, 'near'), { detected: true, contracts: true, kinds: ['contract', 'client', 'intents', 'ai'], marks: ['Cargo.toml'] });
   const web = writeWeb(path.join(fx, 'web'));
   const config = writeConfig(path.join(fx, 'config'));
   const python = writePython(path.join(fx, 'python'));
@@ -796,6 +898,8 @@ function selfTest() {
     ['remaining-accounts', solana.body], ['unchecked-introspection', solana.body], ['close-account', solana.body],
     ['pda-signer-cpi', solana.body], ['direct-lamports', solana.body],
     ...SOLANA_PATTERNS.map((p) => [p.id, solana.body]),
+    ...NEAR_CONTRACT_PATTERNS.map((p) => [p.id, near.body]),
+    ...NEAR_CLIENT_PATTERNS.map((p) => [p.id, near.body]),
     ['xss-html', web.body], ['command-exec', web.body], ['sql-template', web.body], ['yaml-load', web.body],
     ['pickle-loads', web.body], ['tls-verify-off', web.body], ['cors-star', web.body], ['jwt-none', web.body],
     ['cookie-no-httponly', web.body], ['message-listener', web.body], ['postmessage', web.body], ['private-key', web.body],
@@ -840,7 +944,7 @@ else if (!args.target || !args.outDir) {
   process.exit(2);
 } else {
   scan(args.target, args.outDir, args.noDeps).then(
-    (r) => console.log(`harness: solana leads ${r.solana}, web leads ${r.web}, python leads ${r.python}, node leads ${r.node}, stacks [${(r.stacks || []).join(',')}] -> ${args.outDir}`),
+    (r) => console.log(`harness: solana leads ${r.solana}, near leads ${r.near}, web leads ${r.web}, python leads ${r.python}, node leads ${r.node}, stacks [${(r.stacks || []).join(',')}] -> ${args.outDir}`),
     (err) => { console.error(err.message || err); process.exit(1); },
   );
 }

@@ -22,6 +22,9 @@ export function verificationHealth(root, read) {
     } catch { gaps.push(`Invalid existing test evidence: ${name}.`); }
   }
   if (!catalog?.tests?.length) gaps.push('No executable test suite was catalogued; test coverage is unverified.');
+  for (const gap of Array.isArray(catalog?.coverageGaps) ? catalog.coverageGaps : []) {
+    if (typeof gap === 'string' && gap.trim()) gaps.push(gap);
+  }
   for (const entry of catalog?.tests || []) {
     const rows = attempts.filter(row => row.testId === entry.id && row.sourceDigest === manifest.digest);
     const details = new Set();

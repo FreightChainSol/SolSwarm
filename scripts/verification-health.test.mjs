@@ -32,6 +32,13 @@ function fixture(t) {
   return { data, check: () => verificationHealth(root, read), output };
 }
 
+test('a recorded NEAR sandbox gap keeps verification incomplete', t => {
+  const f = fixture(t);
+  f.data['harness/existing-tests.json'].coverageGaps = ['NEAR contract tests in contracts are a local-sandbox coverage gap. cargo test can start near-sandbox or deploy to testnet and is not run offline.'];
+  assert.equal(f.check().state, 'incomplete');
+  assert.match(f.check().gaps.join('\n'), /local-sandbox coverage gap/);
+});
+
 test('executed coverage requires tests, scanner evidence, and scope-correct applicability', t => {
   const f = fixture(t);
   assert.equal(f.check().state, 'passed');

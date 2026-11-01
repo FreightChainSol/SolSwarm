@@ -368,7 +368,7 @@ export async function callBridgeTool(ctx, name, args = {}) {
     } else if (reportDir && fs.existsSync(path.join(reportDir, 'harness', 'review-plans.md'))) {
       parts.push('## Source Security Review Plans', fs.readFileSync(path.join(reportDir, 'harness', 'review-plans.md'), 'utf8').slice(0, 12_000));
     }
-    for (const [file, title, absent, limit] of [['solana.md', 'Solana Leads', 'Solana surface absent', 6000], ['python.md', 'Python Leads', 'Python surface absent', 6000], ['node.md', 'Node Leads', 'Node surface absent', 6000]]) {
+    for (const [file, title, absent, limit] of [['solana.md', 'Solana Leads', 'Solana surface absent', 6000], ['near.md', 'NEAR Leads', 'NEAR surface absent', 6000], ['python.md', 'Python Leads', 'Python surface absent', 6000], ['node.md', 'Node Leads', 'Node surface absent', 6000]]) {
       if (!reportDir || !fs.existsSync(path.join(reportDir, 'harness', file))) continue;
       const text = fs.readFileSync(path.join(reportDir, 'harness', file), 'utf8');
       if (!text.includes(absent)) parts.push(`## ${title}`, text.slice(0, limit));

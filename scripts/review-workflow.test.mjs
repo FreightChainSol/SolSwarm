@@ -96,6 +96,24 @@ test('legacy workflow sessions and deployed RPC requests are rejected before rev
   await assert.rejects(runOrchestratedAudit({ ...request, resume: { conversationId: 'legacy' } }, { review }), /legacy adversarial-session/);
 });
 
+test('a near-sdk package and Intents npm tests are coverage gaps, not offline suites', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'security-review-near-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'contracts'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'other'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'Cargo.toml'), '[workspace]\nmembers = ["contracts", "other"]\n');
+  fs.writeFileSync(path.join(root, 'contracts/Cargo.toml'), '[package]\nname = "c"\nversion = "0.1.0"\n\n[dependencies]\nnear-sdk = "5.29.0"\n');
+  fs.writeFileSync(path.join(root, 'other/Cargo.toml'), '[package]\nname = "other"\nversion = "0.1.0"\n');
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node --test' }, dependencies: { '@defuse-protocol/one-click-sdk-typescript': '1.0.0' } }));
+  const snapshot = createSnapshot(root);
+  const catalog = buildExistingTestCatalog(snapshot.snapshot, snapshot.manifest);
+  disposeSnapshot(snapshot);
+  assert.deepEqual(catalog.tests.map((row) => `${row.kind}:${row.cwd}`), ['cargo:other']);
+  assert.match(catalog.coverageGaps.join('\n'), /NEAR contract tests in \./);
+  assert.match(catalog.coverageGaps.join('\n'), /NEAR contract tests in contracts/);
+  assert.match(catalog.coverageGaps.join('\n'), /one-click-sdk-typescript/);
+});
+
 test('a Python project with tests gets a fixed, hash-bound pytest entry and no caller-controlled interpreter', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'security-review-python-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

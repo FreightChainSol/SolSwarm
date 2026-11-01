@@ -1,0 +1,9 @@
+[package]
+name = "near-fixture"
+version = "0.1.0"
+
+[dependencies]
+near-sdk = "5.29.0"
+
+[profile.release]
+overflow-checks = true

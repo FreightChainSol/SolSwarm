@@ -25,17 +25,50 @@ export function testCommand(kind) {
   throw new Error('Unsupported existing test runner');
 }
 
+const NEAR_NPM_NOT_OFFLINE = ['@defuse-protocol/one-click-sdk-typescript', '@defuse-protocol/intents-sdk', '@near-intents-agent-api/sdk'];
+const VENDORED_MANIFEST = /(?:^|\/)(?:node_modules|vendor|target|dist|build)\//;
+
+function nearNpmBlocked(pkg) {
+  const deps = { ...pkg.dependencies, ...pkg.devDependencies, ...pkg.peerDependencies, ...pkg.optionalDependencies };
+  return NEAR_NPM_NOT_OFFLINE.find((name) => name === pkg.name || Object.prototype.hasOwnProperty.call(deps, name)) || null;
+}
+
 export function buildExistingTestCatalog(snapshot, manifest) {
   const files = new Map(manifest.files.map(file => [file.path, file]));
   const tests = [];
+  const coverageGaps = [];
+  const nearContractDirs = [];
+  for (const file of manifest.files) {
+    if (path.posix.basename(file.path) !== 'Cargo.toml' || VENDORED_MANIFEST.test(file.path)) continue;
+    if (/(?:^|\/)(?:tests?|fixtures?|examples?|docs?|scripts?)\//.test(file.path)) continue;
+    let text = '';
+    try { text = fs.readFileSync(path.join(snapshot, file.path), 'utf8'); } catch { continue; }
+    if (/(?:^|\n)\s*near-sdk\s*=/.test(text)) nearContractDirs.push(path.posix.dirname(file.path));
+  }
   for (const file of manifest.files) {
     const cwd = path.posix.dirname(file.path);
     const name = path.posix.basename(file.path);
     let kind;
     if (name === 'package.json') {
-      try { if (typeof JSON.parse(fs.readFileSync(path.join(snapshot, file.path), 'utf8')).scripts?.test === 'string') kind = 'npm'; } catch { /* malformed manifest is a review lead */ }
-    } else if (name === 'Cargo.toml' && /\[(?:package|workspace)\]/.test(fs.readFileSync(path.join(snapshot, file.path), 'utf8'))) kind = 'cargo';
-    else if (name === 'test.sh') kind = 'shell';
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(snapshot, file.path), 'utf8'));
+        if (typeof pkg.scripts?.test === 'string') {
+          const blocked = nearNpmBlocked(pkg);
+          if (blocked) coverageGaps.push(`NEAR package tests in ${cwd} (${blocked}) are not catalogued as an offline suite. Do not call 1Click, the Intents SDK, or the Intents agent API.`);
+          else kind = 'npm';
+        }
+      } catch { /* malformed manifest is a review lead */ }
+    } else if (name === 'Cargo.toml') {
+      let text = '';
+      try { text = fs.readFileSync(path.join(snapshot, file.path), 'utf8'); } catch { text = ''; }
+      if (/\[(?:package|workspace)\]/.test(text)) {
+        const selfNear = /(?:^|\n)\s*near-sdk\s*=/.test(text);
+        const workspace = /^\s*\[workspace\]/m.test(text);
+        const containsNear = workspace && nearContractDirs.some((dir) => cwd === '.' ? dir !== '.' : dir.startsWith(`${cwd}/`));
+        if (selfNear || containsNear) coverageGaps.push(`NEAR contract tests in ${cwd} are a local-sandbox coverage gap. cargo test can start near-sandbox or deploy to testnet and is not run offline.`);
+        else kind = 'cargo';
+      }
+    } else if (name === 'test.sh') kind = 'shell';
     if (!kind) continue;
     const id = `test-${hash(`${manifest.digest}:${kind}:${cwd}`).slice(0, 24)}`;
     tests.push({ id, kind, cwd, files: [{ path: file.path, sha256: files.get(file.path).sha256 }], description: `${kind} existing tests in ${cwd}` });
@@ -53,7 +86,7 @@ export function buildExistingTestCatalog(snapshot, manifest) {
     const id = `test-${hash(`${manifest.digest}:pytest:${cwd}`).slice(0, 24)}`;
     tests.push({ id, kind: 'pytest', cwd, files: bound.map(file => ({ path: file.path, sha256: file.sha256 })), description: `pytest existing tests in ${cwd}` });
   }
-  return { version: 1, workflow: REVIEW_WORKFLOW, sourceDigest: manifest.digest, tests };
+  return { version: 1, workflow: REVIEW_WORKFLOW, sourceDigest: manifest.digest, tests, coverageGaps };
 }
 
 export function selectExistingTest(catalog, id, sourceDigest) {
@@ -112,6 +145,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
    if(!/\\bcrate-type\\s*=\\s*\\[[^\\]]*"cdylib"/.test(toml))continue;
    const dir=path.dirname(manifest);
    const hasAnchor=[dir,path.dirname(dir),path.dirname(path.dirname(dir))].some(d=>d.startsWith(root)&&fs.existsSync(path.join(d,'Anchor.toml')));
+   // near-sdk crates are WASM contracts. They continue here unless the same manifest is also Solana.
    if(!hasAnchor&&!/(?:anchor-lang|solana-program|solana-cpi|solana-sdk|solana-zk|pinocchio|target_os\\s*=\\s*"solana")/.test(toml))continue;
    const lib=(toml.match(/\\[lib\\][\\s\\S]*?\\bname\\s*=\\s*"([^"]+)"/)?.[1]||toml.match(/\\[package\\][\\s\\S]*?\\bname\\s*=\\s*"([^"]+)"/)?.[1]||'').replace(/-/g,'_');
    programs.push({manifest,dir,lib});
